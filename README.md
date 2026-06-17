@@ -4,7 +4,12 @@
 
 Peck is a lightweight macOS **menu-bar** app that watches your GitHub pull requests and reviews them with an AI agent. Native SwiftUI — no Electron, no server, no account. Just a chick living in your menu bar.
 
-<!-- ![Peck screenshot](docs/screenshot.png) -->
+<p align="center">
+  <img src="docs/my-prs.png" width="380" alt="My PRs — gamified review quest (egg → chick → chicken → 🍗)">
+  &nbsp;
+  <img src="docs/reviews.png" width="380" alt="Review queue — the agent drafts an explanation and a verdict">
+</p>
+<p align="center"><sub>Left: your PRs hatching toward approval. Right: agent-drafted reviews, one click to post.</sub></p>
 
 ---
 

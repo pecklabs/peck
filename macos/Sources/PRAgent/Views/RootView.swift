@@ -32,12 +32,6 @@ struct RootView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            if let logo = RootView.peckLogo {
-                Image(nsImage: logo).renderingMode(.template).resizable().scaledToFit()
-                    .frame(width: 16, height: 16).foregroundStyle(GH.fg)
-            } else {
-                Text("🐤").font(.system(size: 14))
-            }
             Text("Peck").font(.system(size: 13, weight: .bold))
             Circle()
                 .fill(model.connected ? GH.success : GH.muted)

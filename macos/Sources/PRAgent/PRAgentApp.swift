@@ -24,6 +24,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     let model = AppModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let env = ProcessInfo.processInfo.environment
+        if env["PECK_SNAPSHOT"] != nil {
+            Snapshot.run(outDir: env["PECK_SNAPSHOT_OUT"] ?? NSTemporaryDirectory())
+            return
+        }
         NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().delegate = self
         model.bootstrap()

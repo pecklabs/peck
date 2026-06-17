@@ -29,29 +29,39 @@ struct AutoTextEditor: View {
     private let font = Font.system(size: 11, design: .monospaced)
 
     var body: some View {
-        Text(text.isEmpty ? " " : text)
+        let base = Text(text.isEmpty ? " " : text)
             .font(font)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
             .padding(.horizontal, 6)
             .padding(.vertical, 12)
-            .opacity(0)
-            .overlay(
-                TextEditor(text: $text)
-                    .font(font)
-                    .scrollDisabled(true)
-                    .scrollContentBackground(.hidden)
-                    .padding(.top, 7)
-                    .padding(.horizontal, 1)
-            )
-            .background(GH.canvas, in: RoundedRectangle(cornerRadius: 6))
+        Group {
+            if Snapshot.isRendering {
+                base // ImageRenderer can't draw TextEditor — show static text for snapshots
+            } else {
+                base.opacity(0).overlay(
+                    TextEditor(text: $text)
+                        .font(font)
+                        .scrollDisabled(true)
+                        .scrollContentBackground(.hidden)
+                        .padding(.top, 7)
+                        .padding(.horizontal, 1)
+                )
+            }
+        }
+        .background(GH.canvas, in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
 struct ReviewCard: View {
     @EnvironmentObject var model: AppModel
     var req: ReviewRequest
-    @State private var editedBody: String = ""
+    @State private var editedBody: String
     @State private var submitting = false
+
+    init(req: ReviewRequest) {
+        self.req = req
+        _editedBody = State(initialValue: req.draft?.body ?? "")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -103,10 +113,12 @@ struct ReviewCard: View {
                 }
             }
 
-            HStack {
-                Button { Open.url(req.url) } label: { Label(tr("Open on GitHub"), systemImage: "arrow.up.right.square") }
-                    .controlSize(.small).buttonStyle(.borderless)
-                Spacer()
+            if !Snapshot.isRendering {
+                HStack {
+                    Button { Open.url(req.url) } label: { Label(tr("Open on GitHub"), systemImage: "arrow.up.right.square") }
+                        .controlSize(.small).buttonStyle(.borderless)
+                    Spacer()
+                }
             }
         }
         .padding(12)
@@ -122,18 +134,20 @@ struct ReviewCard: View {
                     Text(draft.skillsApplied.joined(separator: " · "))
                         .font(.system(size: 9)).foregroundStyle(GH.muted)
                 }
-                Button {
-                    Task { await model.runReview(id: req.id) }
-                } label: {
-                    if req.reviewing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
+                if !Snapshot.isRendering {
+                    Button {
+                        Task { await model.runReview(id: req.id) }
+                    } label: {
+                        if req.reviewing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
                     }
+                    .buttonStyle(.borderless).controlSize(.small)
+                    .disabled(req.reviewing || !model.agentAvailable)
+                    .help("Regenerate review")
                 }
-                .buttonStyle(.borderless).controlSize(.small)
-                .disabled(req.reviewing || !model.agentAvailable)
-                .help("Regenerate review")
             }
             .onChange(of: draft.generatedAt) { _, _ in editedBody = draft.body }
             Text(draft.summary).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
