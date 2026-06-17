@@ -28,15 +28,21 @@ Peck is a lightweight macOS **menu-bar** app that watches your GitHub pull reque
 
 ## Quick start
 
+1. **[Download the latest release](https://github.com/pecklabs/peck/releases/latest)** and open `Peck.dmg`.
+2. Drag **Peck** to your Applications folder and launch it.
+3. Click the 🐤 in your menu bar → **Settings** → connect GitHub (reuse your `gh` login) → pick an agent backend. Done.
+
+**Requirements:** macOS 14+ · for the agent: the `claude` or `codex` CLI (or an Anthropic API key) · for GitHub: the `gh` CLI logged in (or a personal access token).
+
+<details>
+<summary>Build from source</summary>
+
 ```bash
 cd macos
 ./build.sh
 open "build/Peck.app"
 ```
-
-Click the chick in your menu bar → **Settings** → connect GitHub (reuse your `gh` login) → pick an agent backend. That's it.
-
-**Requirements:** macOS 14+ · for the agent: the `claude` or `codex` CLI (or an Anthropic API key) · for GitHub: the `gh` CLI logged in (or a personal access token).
+</details>
 
 ---
 
