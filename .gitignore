@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Claude Code local config
+.claude/
+
+# Swift / SwiftPM build artifacts
+macos/.build/
+macos/build/
+macos/.swiftpm/
+*.xcuserstate
+
+# Misc
+*.bak
