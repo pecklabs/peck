@@ -20,9 +20,9 @@ Peck is a lightweight macOS **menu-bar** app that watches your GitHub pull reque
 
 🔔 **Notified at the right moment** — a new review request, a conflict on an approved PR, or "everything's approved 🎉".
 
-🎨 **Feels native.** GitHub Primer theming (light & dark), secrets stored in the macOS **Keychain**, never in a file.
+🧩 **Your rules, not a black box.** Teach the agent how *you* review by dropping in markdown **skill** files — enforce team conventions, demand tests, focus on security, ban an anti-pattern, set the tone. Peck folds every enabled skill straight into the agent's instructions, so reviews match *your* standards instead of generic feedback. Add or edit them anytime in `~/Library/Application Support/PRAgent/skills/` — no rebuild needed.
 
-🛠️ **Make it yours.** Steer the agent with markdown **skills**, and read it in **English or 한국어**.
+🔒 **Native & private.** A tiny SwiftUI app (no Electron), with your tokens kept in the macOS **Keychain** — never in a file. UI in **English or 한국어**.
 
 ---
 
