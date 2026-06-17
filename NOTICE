@@ -1,0 +1,22 @@
+Peck — asset notice
+===================
+
+The source code is licensed under the MIT License (see LICENSE).
+
+IMAGE ASSETS ARE NOT MIT-LICENSED.
+
+The mascot and brand images —
+  macos/mark.png
+  macos/peck-mark.svg
+  macos/icons/*
+  macos/Sources/PRAgent/Resources/mascots/*.png
+  macos/Sources/PRAgent/Resources/brand/*.png
+— are sourced from emojis.com or derived from images generated there, and are
+subject to the emojis.com Terms of Service (https://www.emojis.com/terms),
+which prohibit redistribution without express written permission.
+
+They are included here for the maintainer's own build only. If you fork or
+redistribute this project (e.g. make the repository public), remove or replace
+these images with your own / freely-licensed artwork. The app degrades
+gracefully: quest mascots fall back to Unicode emoji and the menu-bar mark
+falls back to the SF Symbol "bird.fill" when the image files are absent.
