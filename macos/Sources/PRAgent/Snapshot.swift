@@ -74,7 +74,7 @@ enum Snapshot {
         m.reviewQueue = [
             ReviewRequest(id: "acme/ios#137", owner: "acme", repo: "ios", number: 137,
                 title: "refactor(runner): split media button by task type", url: "",
-                author: GithubUser(login: "kyo504", name: nil, avatarUrl: ""),
+                author: GithubUser(login: "octocat", name: nil, avatarUrl: ""),
                 isDraft: false, additions: 120, deletions: 44, changedFiles: 8,
                 createdAt: ago(3600), updatedAt: ago(1800), reviewed: false,
                 draft: ReviewDraft(
@@ -87,7 +87,7 @@ enum Snapshot {
                     generatedAt: now, error: nil)),
             ReviewRequest(id: "acme/api#92", owner: "acme", repo: "api", number: 92,
                 title: "feat(points): point-history schema migration", url: "",
-                author: GithubUser(login: "malgogi", name: nil, avatarUrl: ""),
+                author: GithubUser(login: "monalisa", name: nil, avatarUrl: ""),
                 isDraft: false, additions: 64, deletions: 7, changedFiles: 4,
                 createdAt: ago(1200), updatedAt: ago(600), reviewed: false,
                 draft: ReviewDraft(
