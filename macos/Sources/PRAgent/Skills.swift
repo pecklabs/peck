@@ -2,7 +2,9 @@ import Foundation
 
 enum AppPaths {
     static var dataDir: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
         return base.appendingPathComponent("PRAgent", isDirectory: true)
     }
     static var skillsDir: URL { dataDir.appendingPathComponent("skills", isDirectory: true) }
@@ -17,8 +19,8 @@ enum AppPaths {
     private static func seedDefaultSkill() {
         let dest = skillsDir.appendingPathComponent("default-review.md")
         guard !FileManager.default.fileExists(atPath: dest.path) else { return }
-        if let src = Bundle.module.url(forResource: "default-review", withExtension: "md", subdirectory: "skills")
-            ?? Bundle.module.url(forResource: "default-review", withExtension: "md") {
+        if let src = Res.bundle?.url(forResource: "default-review", withExtension: "md", subdirectory: "skills")
+            ?? Res.bundle?.url(forResource: "default-review", withExtension: "md") {
             try? FileManager.default.copyItem(at: src, to: dest)
         }
     }

@@ -47,7 +47,7 @@ fi
 
 # Then the app's own inner items, then the wrapper.
 [ -d "${APP}/Contents/Resources/PRAgent_PRAgent.bundle" ] && sign "${APP}/Contents/Resources/PRAgent_PRAgent.bundle"
-sign "${APP}/Contents/MacOS/PRAgent"
+sign "${APP}/Contents/MacOS/Peck"
 sign "${APP}"
 
 echo "▶ Verifying signature"

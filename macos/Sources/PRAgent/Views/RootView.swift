@@ -9,7 +9,7 @@ struct RootView: View {
 
     private var effectiveTab: Tab { model.connected ? tab : .settings }
 
-    static let peckLogo: NSImage? = Bundle.module
+    static let peckLogo: NSImage? = Res.bundle?
         .url(forResource: "peck-mark", withExtension: "png", subdirectory: "brand")
         .flatMap { NSImage(contentsOf: $0) }
 

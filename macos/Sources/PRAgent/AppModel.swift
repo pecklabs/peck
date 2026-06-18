@@ -66,6 +66,10 @@ final class AppModel: ObservableObject {
     private func startUpdaterIfConfigured() {
         #if canImport(Sparkle)
         guard Bundle.main.bundleIdentifier != nil,
+              let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+              let feedURL = URL(string: feed),
+              feedURL.scheme != nil,
+              feedURL.host != nil,
               let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
               !key.isEmpty, !key.hasPrefix("REPLACE") else { return }
         updaterController = SPUStandardUpdaterController(

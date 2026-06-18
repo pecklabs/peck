@@ -40,7 +40,7 @@ private struct TrayGlyphs: View {
     }
 
     // The Peck mark (template PNG silhouette) loaded from the resource bundle.
-    private static let peckMarkImage: NSImage? = Bundle.module
+    private static let peckMarkImage: NSImage? = Res.bundle?
         .url(forResource: "peck-mark", withExtension: "png", subdirectory: "brand")
         .flatMap { NSImage(contentsOf: $0) }
 

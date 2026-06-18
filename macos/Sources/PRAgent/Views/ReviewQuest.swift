@@ -19,8 +19,8 @@ struct MascotView: View {
 
 enum MascotImages {
     static func image(_ name: String) -> NSImage? {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "mascots")
-            ?? Bundle.module.url(forResource: name, withExtension: "png")
+        guard let url = Res.bundle?.url(forResource: name, withExtension: "png", subdirectory: "mascots")
+            ?? Res.bundle?.url(forResource: name, withExtension: "png")
         else { return nil }
         return NSImage(contentsOf: url)
     }

@@ -1,13 +1,30 @@
 {
-  "fill" : "automatic",
+  "fill" : "system-dark",
   "groups" : [
     {
       "layers" : [
         {
+          "blend-mode" : "plus-lighter",
+          "fill" : {
+            "linear-gradient" : [
+              "display-p3:0.63545,0.51536,0.19694,1.00000",
+              "display-p3:0.93510,0.97302,0.98461,1.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 0
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0.7
+              }
+            }
+          },
           "image-name" : "peck-mark.svg",
           "name" : "peck-mark",
           "position" : {
-            "scale" : 0.85,
+            "scale" : 0.6,
             "translation-in-points" : [
               0.10965022653078904,
               -0.3952020419163773

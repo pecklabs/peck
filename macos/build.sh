@@ -10,7 +10,7 @@ BUILD_DIR=".build/${CONFIG}"
 APP="build/${APP_NAME}.app"
 
 # Overridable for releases / CI.
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_VERSION="${APP_VERSION:-0.1.1}"
 APP_BUILD="${APP_BUILD:-${APP_VERSION}}"
 SU_FEED_URL="${SU_FEED_URL:-https://github.com/pecklabs/peck/releases/latest/download/appcast.xml}"
 SU_PUBLIC_KEY="${SU_PUBLIC_KEY:-nPiJbULahvPzeQB+20YmZR1d1DkEvkHr1J7NZU5rSBg=}"
@@ -22,7 +22,10 @@ echo "▶ assembling ${APP}"
 rm -rf "${APP}"
 mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources" "${APP}/Contents/Frameworks"
 
-cp "${BUILD_DIR}/PRAgent" "${APP}/Contents/MacOS/PRAgent"
+# The SwiftPM target is named PRAgent, but the user-facing process should be
+# "Peck" (Activity Monitor, Force Quit, notifications, crash reports). Rename the
+# binary in the bundle; CFBundleExecutable below matches.
+cp "${BUILD_DIR}/PRAgent" "${APP}/Contents/MacOS/Peck"
 
 # App icon — compile the Icon Composer .icon with actool into Assets.car (Liquid
 # Glass, macOS 26+) plus AppIcon.icns (raster fallback for older systems).
@@ -77,7 +80,7 @@ cat > "${APP}/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key><string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
-  <key>CFBundleExecutable</key><string>PRAgent</string>
+  <key>CFBundleExecutable</key><string>Peck</string>
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleVersion</key><string>${APP_BUILD}</string>
   <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
