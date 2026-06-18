@@ -12,8 +12,8 @@ APP="build/${APP_NAME}.app"
 # Overridable for releases / CI.
 APP_VERSION="${APP_VERSION:-0.1.0}"
 APP_BUILD="${APP_BUILD:-${APP_VERSION}}"
-SU_FEED_URL="${SU_FEED_URL:-https://github.com/OWNER/REPO/releases/latest/download/appcast.xml}"
-SU_PUBLIC_KEY="${SU_PUBLIC_KEY:-REPLACE_WITH_SPARKLE_PUBLIC_KEY}"
+SU_FEED_URL="${SU_FEED_URL:-https://github.com/pecklabs/peck/releases/latest/download/appcast.xml}"
+SU_PUBLIC_KEY="${SU_PUBLIC_KEY:-nPiJbULahvPzeQB+20YmZR1d1DkEvkHr1J7NZU5rSBg=}"
 
 echo "▶ swift build -c ${CONFIG}"
 swift build -c "${CONFIG}"
@@ -24,9 +24,45 @@ mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources" "${APP}/Contents/Fr
 
 cp "${BUILD_DIR}/PRAgent" "${APP}/Contents/MacOS/PRAgent"
 
+# App icon — compile the Icon Composer .icon with actool into Assets.car (Liquid
+# Glass, macOS 26+) plus AppIcon.icns (raster fallback for older systems).
+# Finder / DMG / Spotlight; a menu-bar app has no Dock icon.
+if [ -d "AppIcon.icon" ]; then
+  xcrun actool AppIcon.icon \
+    --compile "${APP}/Contents/Resources" \
+    --app-icon AppIcon \
+    --platform macosx \
+    --minimum-deployment-target 14.0 \
+    --target-device mac \
+    --output-partial-info-plist "build/icon-info.plist" \
+    --output-format human-readable-text >/dev/null
+fi
+
 # SwiftPM resource bundle (skills, assets) — Bundle.module resolves it from Resources/.
 if [ -d "${BUILD_DIR}/PRAgent_PRAgent.bundle" ]; then
+  RESBUNDLE="${APP}/Contents/Resources/PRAgent_PRAgent.bundle"
   cp -R "${BUILD_DIR}/PRAgent_PRAgent.bundle" "${APP}/Contents/Resources/"
+  # SwiftPM emits a flat resource bundle with no Info.plist; codesign won't treat
+  # it as a bundle (and notarization needs every nested bundle signed). Give it a
+  # minimal Info.plist so `codesign` in release.sh can seal it.
+  if [ ! -f "${RESBUNDLE}/Info.plist" ]; then
+    cat > "${RESBUNDLE}/Info.plist" <<RESPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>${BUNDLE_ID}.resources</string>
+  <key>CFBundleName</key><string>PRAgent</string>
+  <key>CFBundlePackageType</key><string>BNDL</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
+  <key>CFBundleVersion</key><string>${APP_BUILD}</string>
+</dict>
+</plist>
+RESPLIST
+  fi
+  # Drop the uncompiled asset catalog — superseded by PNG resources, dead weight.
+  rm -rf "${RESBUNDLE}/Media.xcassets"
 fi
 
 # Embed Sparkle.framework (auto-update).
@@ -46,9 +82,11 @@ cat > "${APP}/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${APP_BUILD}</string>
   <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSHumanReadableCopyright</key><string>PR Agent</string>
+  <key>NSHumanReadableCopyright</key><string>© 2026 Soohyun Jung · pecklabs</string>
   <key>SUFeedURL</key><string>${SU_FEED_URL}</string>
   <key>SUPublicEDKey</key><string>${SU_PUBLIC_KEY}</string>
   <key>SUEnableAutomaticChecks</key><true/>

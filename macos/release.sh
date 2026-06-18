@@ -72,8 +72,32 @@ ln -s /Applications "${STAGE}/Applications"
 hdiutil create -volname "${APP_NAME}" -srcfolder "${STAGE}" -ov -format UDZO "${DMG}"
 rm -rf "${STAGE}"
 
+echo "▶ Signing + notarizing the DMG itself"
+sign "${DMG}"
+xcrun notarytool submit "${DMG}" --keychain-profile "${NOTARY_PROFILE}" --wait
+xcrun stapler staple "${DMG}"
+xcrun stapler validate "${DMG}"
+
 echo "▶ Gatekeeper assessment"
 spctl -a -vvv --type install "${DMG}" || true
 
+# Sparkle appcast — EdDSA-signs the DMG and writes build/appcast.xml. Enclosure +
+# feed both served from the latest GitHub release, so no per-version URL edits.
+APPCAST_PREFIX="${APPCAST_PREFIX:-https://github.com/pecklabs/peck/releases/latest/download/}"
+GEN_APPCAST="$(find .build -path '*/sparkle/Sparkle/bin/generate_appcast' 2>/dev/null | head -1)"
+if [ -n "${GEN_APPCAST}" ]; then
+  echo "▶ Generating Sparkle appcast"
+  # Run against a dir holding ONLY this DMG, so stray archives can't trip the
+  # "duplicate updates" check.
+  ACDIR="build/appcast"
+  rm -rf "${ACDIR}"; mkdir -p "${ACDIR}"
+  cp "${DMG}" "${ACDIR}/"
+  "${GEN_APPCAST}" --download-url-prefix "${APPCAST_PREFIX}" "${ACDIR}"
+  cp "${ACDIR}/appcast.xml" build/appcast.xml
+  echo "  wrote build/appcast.xml"
+else
+  echo "  (generate_appcast not found — skipping appcast; run 'swift build' once)"
+fi
+
 echo "✓ Done: ${DMG}"
-echo "  Share this DMG — it opens without Gatekeeper warnings."
+echo "  Upload BOTH to the GitHub release: build/Peck.dmg and build/appcast.xml"
