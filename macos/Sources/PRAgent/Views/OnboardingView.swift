@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Shown in a standalone window on first launch (and whenever disconnected), so a
 /// freshly-installed menu-bar app doesn't look like "nothing happened". Mirrors
@@ -9,10 +10,17 @@ struct OnboardingView: View {
     @State private var connecting = false
     @State private var showTokenField = false
 
+    private static let appIcon: NSImage? = NSApplication.shared.applicationIconImage
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("🐤 \(tr("Welcome to Peck"))").font(.system(size: 20, weight: .bold))
+                HStack(spacing: 10) {
+                    if let icon = Self.appIcon {
+                        Image(nsImage: icon).resizable().frame(width: 40, height: 40)
+                    }
+                    Text(tr("Welcome to Peck")).font(.system(size: 20, weight: .bold))
+                }
                 Text(tr("Peck lives in your menu bar. Connect GitHub to start reviewing PRs."))
                     .font(.system(size: 12)).foregroundStyle(GH.muted)
                     .fixedSize(horizontal: false, vertical: true)
