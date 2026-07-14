@@ -52,7 +52,7 @@ final class AppModel: ObservableObject {
 
     func bootstrap() {
         AppPaths.ensure()
-        Notifier.requestAuthorization()
+        Task { await Notifier.requestAuthorization() }
         startUpdaterIfConfigured()
         skills = Skills.info()
         if settings.useGhAuth {

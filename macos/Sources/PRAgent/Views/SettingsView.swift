@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UserNotifications
 
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
@@ -9,6 +11,12 @@ struct SettingsView: View {
                 if !model.connected { onboarding } else { connectedSettings }
             }
             .padding(14)
+        }
+        .task { notifyStatus = await Notifier.authorizationStatus() }
+        // The user may have just flipped the switch over in System Settings; re-read on
+        // the way back so the warning below clears itself.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { notifyStatus = await Notifier.authorizationStatus() }
         }
     }
 
@@ -190,12 +198,7 @@ struct SettingsView: View {
                 }
                 toggle(tr("Auto-review new requests"), \.autoReview)
                 toggle(tr("Auto-submit agent verdict"), \.autoSubmit)
-                toggle(tr("Desktop notifications"), \.notifications)
-                Button(tr("Send test notification")) {
-                    Notifier.post(title: "Peck", body: "Test notification ✅",
-                                  subtitle: "If you see this, notifications work")
-                }
-                .controlSize(.small)
+                notificationControls
             }
 
             section(tr("Review skills")) {
@@ -219,6 +222,49 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: Notifications
+
+    @State private var notifyStatus: UNAuthorizationStatus?
+
+    /// macOS blocks a denied app's notifications outright, so on its own our toggle is a
+    /// switch wired to nothing: flipping it changes a boolean and the user still sees no
+    /// banners. When the OS is the one saying no, say so and hand them the one place that
+    /// can undo it — an app can't grant itself the permission back.
+    @ViewBuilder private var notificationControls: some View {
+        let blocked = notifyStatus == .denied
+
+        Toggle(tr("Desktop notifications"), isOn: Binding(
+            get: { model.settings.notifications },
+            set: { on in
+                var s = model.settings
+                s.notifications = on
+                model.saveSettings(s)
+                guard on else { return }
+                Task {
+                    if notifyStatus == .notDetermined { notifyStatus = await Notifier.requestAuthorization() }
+                    if notifyStatus == .denied { Notifier.openSystemSettings() }
+                }
+            }))
+            .font(.system(size: 12))
+
+        if model.settings.notifications, blocked {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(tr("macOS is blocking Peck's notifications. Allow them in System Settings and this goes away."),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10)).foregroundStyle(GH.attention)
+                Button(tr("Open System Settings")) { Notifier.openSystemSettings() }
+                    .controlSize(.small)
+            }
+        }
+
+        Button(tr("Send test notification")) {
+            Notifier.post(title: "Peck", body: "Test notification ✅",
+                          subtitle: "If you see this, notifications work")
+        }
+        .controlSize(.small)
+        .disabled(blocked)
     }
 
     @ViewBuilder private var avatar: some View {

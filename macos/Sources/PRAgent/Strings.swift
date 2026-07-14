@@ -84,6 +84,9 @@ enum I18n {
         "Auto-submit agent verdict": "에이전트 평결 자동 제출",
         "Desktop notifications": "데스크탑 알림",
         "Send test notification": "테스트 알림 보내기",
+        "macOS is blocking Peck's notifications. Allow them in System Settings and this goes away.":
+            "macOS가 Peck의 알림을 차단하고 있어요. 시스템 설정에서 허용하면 이 안내는 사라져요.",
+        "Open System Settings": "시스템 설정 열기",
         // Settings — skills + language
         "Review skills": "리뷰 스킬",
         "Skills are *.md files in ~/Library/Application Support/PRAgent/skills. Add `enabled: false` to a file's frontmatter to disable it.":
