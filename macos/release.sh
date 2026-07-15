@@ -92,7 +92,16 @@ if [ -n "${GEN_APPCAST}" ]; then
   ACDIR="build/appcast"
   rm -rf "${ACDIR}"; mkdir -p "${ACDIR}"
   cp "${DMG}" "${ACDIR}/"
-  "${GEN_APPCAST}" --download-url-prefix "${APPCAST_PREFIX}" "${ACDIR}"
+  # Locally the EdDSA private key is read from the login Keychain. CI has no
+  # Keychain key, so it passes the (existing, unchanged) key via this env var and
+  # we stream it to generate_appcast's --ed-key-file -. Same key either way, so
+  # both paths produce updates that installed apps accept.
+  if [ -n "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
+    printf '%s' "${SPARKLE_ED_PRIVATE_KEY}" \
+      | "${GEN_APPCAST}" --ed-key-file - --download-url-prefix "${APPCAST_PREFIX}" "${ACDIR}"
+  else
+    "${GEN_APPCAST}" --download-url-prefix "${APPCAST_PREFIX}" "${ACDIR}"
+  fi
   cp "${ACDIR}/appcast.xml" build/appcast.xml
   echo "  wrote build/appcast.xml"
 else

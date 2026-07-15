@@ -1,0 +1,91 @@
+name: Release
+
+# Builds, Developer ID-signs, notarizes and publishes a DMG + Sparkle appcast
+# when you push a version tag:  git tag v0.3.0 && git push origin v0.3.0
+#
+# The release is published as a PRE-RELEASE. Installed apps auto-update from the
+# GitHub "latest" release, so nothing reaches users until a human verifies the
+# build and promotes it:  gh release edit v0.3.0 --latest --prerelease=false
+# (The one irreversible step stays manual on purpose.)
+#
+# ── Required repository secrets ─────────────────────────────────────────────
+#  BUILD_CERTIFICATE_BASE64     base64 of your exported "Developer ID Application" .p12
+#  P12_PASSWORD                 password for that .p12
+#  KEYCHAIN_PASSWORD            any throwaway password for the temp CI keychain
+#  DEVELOPER_ID_NAME            "Developer ID Application: Soohyun Jung (4P8783Z9RM)"
+#  APPLE_ID                     Apple ID email (the naver account, not suyo)
+#  APPLE_TEAM_ID                4P8783Z9RM
+#  APPLE_APP_SPECIFIC_PASSWORD  app-specific password from appleid.apple.com
+#  SPARKLE_ED_PRIVATE_KEY       the EXISTING Sparkle EdDSA private key, exported with
+#                               `generate_keys -x key.txt`. Do NOT run `generate_keys`
+#                               with no arguments — a fresh keypair permanently breaks
+#                               auto-update for every installed copy, which only trusts
+#                               the public key already baked into macos/build.sh.
+#
+# The Sparkle PUBLIC key lives in macos/build.sh (SU_PUBLIC_KEY); it is not secret
+# and must never change, or installed apps reject the update.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_B64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          CERT_PW: ${{ secrets.P12_PASSWORD }}
+          KC_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PW" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PW" "$KEYCHAIN"
+          # Keep the login keychain in the search list too, so notarytool can read
+          # the credential profile stored below from the default keychain.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+      - name: Store notarization credentials
+        # No --keychain: store in the default (login) keychain, which is where
+        # release.sh's `notarytool submit --keychain-profile` looks it up.
+        run: |
+          xcrun notarytool store-credentials "PRAgentNotary" \
+            --apple-id "${{ secrets.APPLE_ID }}" \
+            --team-id "${{ secrets.APPLE_TEAM_ID }}" \
+            --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}"
+
+      # One step, the same script we run locally — build, sign, notarize, staple,
+      # DMG, and the Sparkle-signed appcast. No hand-written XML that could drift
+      # from what the app actually expects.
+      - name: Build, sign, notarize, package, appcast
+        working-directory: macos
+        env:
+          DEV_ID: ${{ secrets.DEVELOPER_ID_NAME }}
+          NOTARY_PROFILE: PRAgentNotary
+          APP_VERSION: ${{ steps.ver.outputs.version }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: ./release.sh
+
+      - name: Publish GitHub pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Peck ${{ steps.ver.outputs.version }}
+          prerelease: true
+          files: |
+            macos/build/Peck.dmg
+            macos/build/appcast.xml
