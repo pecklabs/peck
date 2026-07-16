@@ -41,6 +41,11 @@ final class AppModel: ObservableObject {
     private var notifiedConflicts: Set<String> = []
     private var prevAllApproved = false
 
+    /// My non-draft PR ids seen so far. nil until the first sync — that sync only
+    /// records a baseline, so launching the app doesn't self-review every PR that
+    /// was already open. Anything appearing later was just uploaded.
+    private var seenMyPrIds: Set<String>?
+
     private let settingsKey = "settings"
 
     init() {
@@ -214,6 +219,7 @@ final class AppModel: ObservableObject {
         connected = false
         reviewQueue = []
         myPrs = []
+        seenMyPrIds = nil
         recomputeTray()
     }
 
@@ -248,12 +254,13 @@ final class AppModel: ObservableObject {
             async let m = github.fetchMyPullRequests()
             let (queue, prs) = try await (q, m)
             mergeQueue(queue)
-            myPrs = prs
+            mergeMyPrs(prs)
             connected = true
             errorMessage = nil
             lastSync = Date()
             recomputeTray()
-            handleNotifications(queue: reviewQueue, myPrs: prs)
+            handleNotifications(queue: reviewQueue, myPrs: myPrs)
+            triggerSelfReviews()
         } catch {
             connected = false
             errorMessage = error.localizedDescription
@@ -271,6 +278,38 @@ final class AppModel: ObservableObject {
             }
             return r
         }
+    }
+
+    /// Preserve self-review results across refreshes. A self-review runs once per
+    /// upload (not per update), so it's kept even when the PR has new activity.
+    private func mergeMyPrs(_ incoming: [MyPullRequest]) {
+        let prev = Dictionary(uniqueKeysWithValues: myPrs.map { ($0.id, $0) })
+        myPrs = incoming.map { p in
+            var p = p
+            if let old = prev[p.id] {
+                p.selfReview = old.selfReview
+                p.selfReviewing = old.selfReviewing
+            }
+            return p
+        }
+    }
+
+    /// Self-review each PR the user uploads while the app is running. Draft PRs
+    /// don't count until they're marked ready for review.
+    private func triggerSelfReviews() {
+        let ready = Set(myPrs.filter { !$0.isDraft }.map(\.id))
+        guard var seen = seenMyPrIds else {
+            seenMyPrIds = ready
+            return
+        }
+        if settings.selfReview && agentAvailable {
+            for p in myPrs where !p.isDraft && !seen.contains(p.id)
+                && p.selfReview == nil && !p.selfReviewing {
+                Task { await self.runSelfReview(id: p.id) }
+            }
+        }
+        seen.formUnion(ready)
+        seenMyPrIds = seen
     }
 
     private func recomputeTray() {
@@ -345,6 +384,32 @@ final class AppModel: ObservableObject {
             if let i = reviewQueue.firstIndex(where: { $0.id == id }) {
                 reviewQueue[i].reviewing = false
                 reviewQueue[i].draft = ReviewDraft(
+                    summary: "", verdict: .comment, body: "", risks: [], comments: [],
+                    model: settings.model, skillsApplied: [], generatedAt: Date(),
+                    error: error.localizedDescription)
+            }
+        }
+    }
+
+    func runSelfReview(id: String) async {
+        guard let idx = myPrs.firstIndex(where: { $0.id == id }) else { return }
+        if myPrs[idx].selfReviewing { return }
+        myPrs[idx].selfReviewing = true
+        let pr = myPrs[idx]
+        do {
+            let draft = try await ReviewAgent.selfReview(pr, settings: settings)
+            if let i = myPrs.firstIndex(where: { $0.id == id }) {
+                myPrs[i].selfReview = draft
+                myPrs[i].selfReviewing = false
+            }
+            if settings.notifications {
+                Notifier.post(title: "Peck self-review · \(draft.verdict.selfLabel)", body: pr.title,
+                              subtitle: pr.nameWithNumber)
+            }
+        } catch {
+            if let i = myPrs.firstIndex(where: { $0.id == id }) {
+                myPrs[i].selfReviewing = false
+                myPrs[i].selfReview = ReviewDraft(
                     summary: "", verdict: .comment, body: "", risks: [], comments: [],
                     model: settings.model, skillsApplied: [], generatedAt: Date(),
                     error: error.localizedDescription)

@@ -68,6 +68,19 @@ struct VerdictBadge: View {
     }
 }
 
+/// Verdict pill for a self-review of the user's own PR — reads as a readiness
+/// call ("ready" / "fix first"), not as a review to submit.
+struct SelfVerdictBadge: View {
+    var verdict: Verdict
+    var body: some View {
+        switch verdict {
+        case .approve: Pill(text: verdict.selfLabel, color: GH.success, systemImage: "checkmark.seal")
+        case .requestChanges: Pill(text: verdict.selfLabel, color: GH.attention, systemImage: "wrench.and.screwdriver")
+        case .comment: Pill(text: verdict.selfLabel, color: GH.accent, systemImage: "text.bubble")
+        }
+    }
+}
+
 enum Open {
     static func url(_ s: String) {
         guard let u = URL(string: s) else { return }

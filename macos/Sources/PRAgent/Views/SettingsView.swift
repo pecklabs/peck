@@ -197,6 +197,7 @@ struct SettingsView: View {
                     Text(I18n.isKorean ? "\(model.settings.pollIntervalSec)\u{cd08}\u{b9c8}\u{b2e4} \u{d655}\u{c778}" : "Poll every \(model.settings.pollIntervalSec)s").font(.system(size: 12))
                 }
                 toggle(tr("Auto-review new requests"), \.autoReview)
+                toggle(tr("Self-review my new PRs"), \.selfReview)
                 toggle(tr("Auto-submit agent verdict"), \.autoSubmit)
                 notificationControls
             }
