@@ -12,6 +12,16 @@ enum Verdict: String, Codable, CaseIterable {
         case .comment: return tr("Comment")
         }
     }
+
+    /// Reading of the verdict when the agent self-reviews the user's own PR —
+    /// a readiness call for the author, not a review that gets posted.
+    var selfLabel: String {
+        switch self {
+        case .approve: return tr("Ready for review")
+        case .requestChanges: return tr("Fix before review")
+        case .comment: return tr("Minor notes")
+        }
+    }
 }
 
 enum ReviewDecision: String, Codable {
@@ -101,6 +111,9 @@ struct MyPullRequest: Identifiable, Equatable {
     var reviewedCount: Int = 0
     /// Reviews left by bots (shown separately, excluded from human counts).
     var botReviewCount: Int = 0
+    /// One-shot agent self-review, generated when the PR is first uploaded.
+    var selfReview: ReviewDraft? = nil
+    var selfReviewing: Bool = false
 
     var nameWithNumber: String { "\(owner)/\(repo) #\(number)" }
 
@@ -272,6 +285,8 @@ struct AppSettings: Codable, Equatable {
     var model: String = "claude-opus-4-8"
     var pollIntervalSec: Int = 60
     var autoReview: Bool = true
+    /// Self-review each PR the user uploads and show the result in My PRs.
+    var selfReview: Bool = true
     var autoSubmit: Bool = false
     var notifications: Bool = true
     var agentBackend: AgentBackend = .claudeCLI
@@ -285,7 +300,7 @@ struct AppSettings: Codable, Equatable {
 
     // Tolerate older persisted settings that lack the newer keys.
     enum CodingKeys: String, CodingKey {
-        case model, pollIntervalSec, autoReview, autoSubmit, notifications, agentBackend, useGhAuth
+        case model, pollIntervalSec, autoReview, selfReview, autoSubmit, notifications, agentBackend, useGhAuth
         case explanationLanguage, reviewLanguage, uiLanguage
     }
     init() {}
@@ -294,6 +309,7 @@ struct AppSettings: Codable, Equatable {
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? "claude-opus-4-8"
         pollIntervalSec = try c.decodeIfPresent(Int.self, forKey: .pollIntervalSec) ?? 60
         autoReview = try c.decodeIfPresent(Bool.self, forKey: .autoReview) ?? true
+        selfReview = try c.decodeIfPresent(Bool.self, forKey: .selfReview) ?? true
         autoSubmit = try c.decodeIfPresent(Bool.self, forKey: .autoSubmit) ?? false
         notifications = try c.decodeIfPresent(Bool.self, forKey: .notifications) ?? true
         agentBackend = try c.decodeIfPresent(AgentBackend.self, forKey: .agentBackend) ?? .claudeCLI

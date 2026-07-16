@@ -25,6 +25,11 @@ enum I18n {
         "PRs you author will show up here with their review status.": "당신이 올린 PR이 리뷰 상태와 함께 여기에 표시됩니다.",
         "Waiting on:": "대기 중:",
         "Draft": "초안",
+        "Self-review": "셀프 리뷰",
+        "Peck is self-reviewing…": "Peck이 셀프 리뷰 중…",
+        "Ready for review": "리뷰 요청해도 좋아요",
+        "Fix before review": "리뷰 전 수정 필요",
+        "Minor notes": "참고 사항",
         "Conflict": "충돌",
         "Checks": "체크",
         // Quest (Peck world: egg → chick → chicken)
@@ -81,6 +86,7 @@ enum I18n {
         // Settings — behavior
         "Behavior": "동작",
         "Auto-review new requests": "새 요청 자동 리뷰",
+        "Self-review my new PRs": "내가 올린 새 PR 셀프 리뷰",
         "Auto-submit agent verdict": "에이전트 평결 자동 제출",
         "Desktop notifications": "데스크탑 알림",
         "Send test notification": "테스트 알림 보내기",

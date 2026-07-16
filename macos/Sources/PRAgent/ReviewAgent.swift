@@ -35,6 +35,18 @@ enum ReviewAgent {
     The user makes the final call and will confirm before anything is posted to GitHub.
     """
 
+    static let selfSystemBase = """
+    You are a senior code reviewer helping the user sanity-check a pull request THEY just uploaded, before teammates look at it.
+
+    Your job has two parts:
+    1. EXPLAIN how the PR reads to a first-time reviewer — what it changes and why, and anything a reviewer would stumble on (unclear naming, missing context in the description).
+    2. FLAG what the author should fix before requesting review — real bugs, leftover debug code, dead files, missing tests, risky edge cases — and give a readiness verdict: APPROVE (ready for review), REQUEST_CHANGES (fix the flagged items first), or COMMENT (minor notes only).
+
+    Be concrete and skimmable. Don't pad with praise and don't restate the diff — only say things the author doesn't already know. If the PR is clean, say so plainly and APPROVE.
+
+    Nothing here is posted to GitHub — this is a private pre-flight note for the author.
+    """
+
     static let jsonInstruction = """
     Respond with ONLY a single JSON object (no markdown, no prose, no code fence) with exactly these keys:
     - "summary": string — plain-language explanation of what the PR does and why (2-5 sentences).
@@ -44,42 +56,67 @@ enum ReviewAgent {
     - "comments": array of objects {"path": string, "line": integer, "body": string} — optional inline comments (empty array if none).
     """
 
+    static let selfJsonInstruction = """
+    Respond with ONLY a single JSON object (no markdown, no prose, no code fence) with exactly these keys:
+    - "summary": string — how the PR reads to a first-time reviewer: what it does and why (2-4 sentences).
+    - "verdict": one of "APPROVE" (ready for review), "REQUEST_CHANGES" (fix first), "COMMENT" (minor notes only).
+    - "body": string — leave as an empty string (nothing is posted).
+    - "risks": array of strings — concrete things to fix or double-check before requesting review (empty array if none).
+    - "comments": empty array.
+    """
+
     // MARK: Shared context
+
+    /// Who the review is for: a PR the user was asked to review, or a pre-flight
+    /// self-review of a PR the user authored (never posted anywhere).
+    enum Mode { case incoming, selfCheck }
 
     private struct Prepared {
         var content: PrContent
         var system: String
         var userMsg: String
         var applied: [String]
+        var json: String
     }
 
-    private static func languageInstruction(_ s: AppSettings) -> String {
-        """
-        LANGUAGE:
-        - Write "summary" and every item in "risks" in \(s.explanationLanguage).
-        - Write "body" (this text will be posted publicly on GitHub) in \(s.reviewLanguage).
-        - Keep the JSON keys and the "verdict" value exactly as specified (English enum values).
-        """
+    private static func languageInstruction(_ s: AppSettings, mode: Mode) -> String {
+        switch mode {
+        case .incoming:
+            return """
+            LANGUAGE:
+            - Write "summary" and every item in "risks" in \(s.explanationLanguage).
+            - Write "body" (this text will be posted publicly on GitHub) in \(s.reviewLanguage).
+            - Keep the JSON keys and the "verdict" value exactly as specified (English enum values).
+            """
+        case .selfCheck:
+            return """
+            LANGUAGE:
+            - Write "summary" and every item in "risks" in \(s.explanationLanguage).
+            - Keep the JSON keys and the "verdict" value exactly as specified (English enum values).
+            """
+        }
     }
 
-    private static func prepare(_ pr: ReviewRequest, _ settings: AppSettings) async throws -> Prepared {
-        let content = try await GitHubClient.shared.fetchPrContent(owner: pr.owner, repo: pr.repo, number: pr.number)
+    private static func prepare(owner: String, repo: String, number: Int,
+                                mode: Mode, settings: AppSettings) async throws -> Prepared {
+        let content = try await GitHubClient.shared.fetchPrContent(owner: owner, repo: repo, number: number)
         var diff = content.diff
         var truncated = false
         if diff.count > maxDiffChars { diff = String(diff.prefix(maxDiffChars)); truncated = true }
 
         let skills = Skills.activeInstructions()
+        let base = mode == .incoming ? systemBase : selfSystemBase
         let system = skills.text.isEmpty
-            ? systemBase
-            : "\(systemBase)\n\nThe user has provided the following review guidelines. Follow them:\n\n\(skills.text)"
+            ? base
+            : "\(base)\n\nThe user has provided the following review guidelines. Follow them:\n\n\(skills.text)"
 
         let fileList = content.files
             .map { "- \($0.status) \($0.filename) (+\($0.additions)/-\($0.deletions))" }
             .joined(separator: "\n")
 
         let userMsg = """
-        Repository: \(pr.owner)/\(pr.repo)
-        Pull request #\(pr.number): \(content.title)
+        Repository: \(owner)/\(repo)
+        Pull request #\(number): \(content.title)
 
         Description:
         \(content.body.isEmpty ? "(no description)" : content.body)
@@ -92,11 +129,12 @@ enum ReviewAgent {
         \(diff)
         ```
 
-        Review this PR.
+        \(mode == .incoming ? "Review this PR." : "Self-review this PR the user authored.")
 
-        \(languageInstruction(settings))
+        \(languageInstruction(settings, mode: mode))
         """
-        return Prepared(content: content, system: system, userMsg: userMsg, applied: skills.applied)
+        return Prepared(content: content, system: system, userMsg: userMsg, applied: skills.applied,
+                        json: mode == .incoming ? jsonInstruction : selfJsonInstruction)
     }
 
     private static func draft(from obj: [String: Any], applied: [String], model: String) throws -> ReviewDraft {
@@ -118,24 +156,34 @@ enum ReviewAgent {
         )
     }
 
-    // MARK: Entry point
+    // MARK: Entry points
 
     static func review(_ pr: ReviewRequest, settings: AppSettings) async throws -> ReviewDraft {
+        try await run(owner: pr.owner, repo: pr.repo, number: pr.number, mode: .incoming, settings: settings)
+    }
+
+    /// Pre-flight review of the user's own PR. Same pipeline, self-check prompt.
+    static func selfReview(_ pr: MyPullRequest, settings: AppSettings) async throws -> ReviewDraft {
+        try await run(owner: pr.owner, repo: pr.repo, number: pr.number, mode: .selfCheck, settings: settings)
+    }
+
+    private static func run(owner: String, repo: String, number: Int,
+                            mode: Mode, settings: AppSettings) async throws -> ReviewDraft {
+        let p = try await prepare(owner: owner, repo: repo, number: number, mode: mode, settings: settings)
         switch settings.agentBackend {
-        case .anthropicAPI: return try await reviewViaAPI(pr, settings: settings)
-        case .claudeCLI: return try await reviewViaClaude(pr, settings: settings)
-        case .codexCLI: return try await reviewViaCodex(pr, settings: settings)
+        case .anthropicAPI: return try await reviewViaAPI(p, settings: settings)
+        case .claudeCLI: return try await reviewViaClaude(p)
+        case .codexCLI: return try await reviewViaCodex(p)
         }
     }
 
     // MARK: claude CLI
 
-    private static func reviewViaClaude(_ pr: ReviewRequest, settings: AppSettings) async throws -> ReviewDraft {
+    private static func reviewViaClaude(_ p: Prepared) async throws -> ReviewDraft {
         guard let path = Shell.resolve("claude") else {
             throw AgentError(message: "`claude` CLI not found. Install Claude Code or pick another backend.")
         }
-        let p = try await prepare(pr, settings)
-        let prompt = "\(p.system)\n\n\(p.userMsg)\n\n\(jsonInstruction)"
+        let prompt = "\(p.system)\n\n\(p.userMsg)\n\n\(p.json)"
         let r = try await Shell.run(path, ["-p", "--output-format", "json"], stdin: prompt, cwd: workDir)
         guard r.exit == 0 else {
             throw AgentError(message: "claude CLI failed: \(r.stderr.isEmpty ? r.stdout : r.stderr)")
@@ -175,12 +223,11 @@ enum ReviewAgent {
         ],
     ]
 
-    private static func reviewViaCodex(_ pr: ReviewRequest, settings: AppSettings) async throws -> ReviewDraft {
+    private static func reviewViaCodex(_ p: Prepared) async throws -> ReviewDraft {
         guard let path = Shell.resolve("codex") else {
             throw AgentError(message: "`codex` CLI not found. Install Codex or pick another backend.")
         }
-        let p = try await prepare(pr, settings)
-        let prompt = "\(p.system)\n\n\(p.userMsg)\n\n\(jsonInstruction)"
+        let prompt = "\(p.system)\n\n\(p.userMsg)\n\n\(p.json)"
 
         let dir = workDir
         let schemaPath = (dir as NSString).appendingPathComponent("schema.json")
@@ -203,12 +250,11 @@ enum ReviewAgent {
 
     // MARK: Anthropic API
 
-    private static func reviewViaAPI(_ pr: ReviewRequest, settings: AppSettings) async throws -> ReviewDraft {
+    private static func reviewViaAPI(_ p: Prepared, settings: AppSettings) async throws -> ReviewDraft {
         guard let key = Keychain.get(.anthropicKey) else {
             throw AgentError(message: "Anthropic API key not set")
         }
         let model = settings.model
-        let p = try await prepare(pr, settings)
         let tool: [String: Any] = [
             "name": "submit_review_draft",
             "description": "Provide the structured review of the pull request.",

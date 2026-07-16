@@ -63,48 +63,122 @@ struct MyPrRow: View {
     var pr: MyPullRequest
 
     var body: some View {
-        Button { Open.url(pr.url) } label: {
-            HStack(spacing: 0) {
-                if pr.approvedButConflicted {
-                    Rectangle()
-                        .fill(GH.severe)
-                        .frame(width: 3)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(pr.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
-                        Spacer()
-                    }
-                    Text(pr.nameWithNumber).font(.system(size: 10)).foregroundStyle(GH.muted)
-                    ReviewQuest(pr: pr)
-                    HStack(spacing: 5) {
-                        if pr.isDraft { Pill(text: tr("Draft"), color: GH.muted, systemImage: "pencil.line") }
-                        if pr.mergeable == .conflicting { ConflictBadge() }
-                        ChecksBadge(state: pr.checks)
-                        if pr.commentedCount > 0 {
-                            Pill(text: "\(pr.commentedCount)", color: GH.muted, systemImage: "bubble.left")
-                        }
-                        if pr.botReviewCount > 0 {
-                            Pill(text: "\(pr.botReviewCount)", color: GH.done, systemImage: "sparkles")
-                        }
-                        Spacer(minLength: 6)
-                        if !pr.pendingReviewers.isEmpty {
-                            Text(tr("Waiting on:") + " " + pr.pendingReviewers.map { "@\($0)" }.joined(separator: ", "))
-                                .font(.system(size: 10)).foregroundStyle(GH.muted)
-                                .lineLimit(1).truncationMode(.tail)
-                        }
-                    }
-                }
-                .padding(10)
+        HStack(spacing: 0) {
+            if pr.approvedButConflicted {
+                Rectangle()
+                    .fill(GH.severe)
+                    .frame(width: 3)
             }
-            .background(
-                pr.approvedButConflicted
-                    ? GH.severe.opacity(0.08)
-                    : GH.subtle,
-                in: RoundedRectangle(cornerRadius: 9)
-            )
+            VStack(alignment: .leading, spacing: 6) {
+                Button { Open.url(pr.url) } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(pr.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                            Spacer()
+                        }
+                        Text(pr.nameWithNumber).font(.system(size: 10)).foregroundStyle(GH.muted)
+                        ReviewQuest(pr: pr)
+                        HStack(spacing: 5) {
+                            if pr.isDraft { Pill(text: tr("Draft"), color: GH.muted, systemImage: "pencil.line") }
+                            if pr.mergeable == .conflicting { ConflictBadge() }
+                            ChecksBadge(state: pr.checks)
+                            if pr.commentedCount > 0 {
+                                Pill(text: "\(pr.commentedCount)", color: GH.muted, systemImage: "bubble.left")
+                            }
+                            if pr.botReviewCount > 0 {
+                                Pill(text: "\(pr.botReviewCount)", color: GH.done, systemImage: "sparkles")
+                            }
+                            Spacer(minLength: 6)
+                            if !pr.pendingReviewers.isEmpty {
+                                Text(tr("Waiting on:") + " " + pr.pendingReviewers.map { "@\($0)" }.joined(separator: ", "))
+                                    .font(.system(size: 10)).foregroundStyle(GH.muted)
+                                    .lineLimit(1).truncationMode(.tail)
+                            }
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                SelfReviewSection(pr: pr)
+            }
+            .padding(10)
         }
-        .buttonStyle(.plain)
+        .background(
+            pr.approvedButConflicted
+                ? GH.severe.opacity(0.08)
+                : GH.subtle,
+            in: RoundedRectangle(cornerRadius: 9)
+        )
+    }
+}
+
+/// The agent's one-shot pre-flight review of the user's own PR, shown inside
+/// the PR card. Runs automatically when a PR is uploaded; can be re-run here.
+struct SelfReviewSection: View {
+    @EnvironmentObject var model: AppModel
+    var pr: MyPullRequest
+
+    var body: some View {
+        if pr.selfReviewing {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(tr("Peck is self-reviewing…")).font(.system(size: 11)).foregroundStyle(GH.muted)
+            }
+        } else if let draft = pr.selfReview {
+            if let err = draft.error {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(GH.attention)
+                    Text(err).font(.system(size: 11)).foregroundStyle(GH.muted).lineLimit(3)
+                    Spacer()
+                    Button(tr("Retry")) { Task { await model.runSelfReview(id: pr.id) } }
+                        .controlSize(.small)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        SelfVerdictBadge(verdict: draft.verdict)
+                        Text(tr("Self-review")).font(.system(size: 9, weight: .semibold)).foregroundStyle(GH.muted)
+                        Spacer()
+                        if !Snapshot.isRendering {
+                            Button {
+                                Task { await model.runSelfReview(id: pr.id) }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .buttonStyle(.borderless).controlSize(.small)
+                            .disabled(!model.agentAvailable)
+                            .help("Run self-review again")
+                        }
+                    }
+                    Text(draft.summary).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+                    if !draft.risks.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(Array(draft.risks.enumerated()), id: \.offset) { _, risk in
+                                HStack(alignment: .top, spacing: 5) {
+                                    Image(systemName: "exclamationmark.circle").font(.system(size: 9))
+                                        .foregroundStyle(GH.attention).padding(.top, 2)
+                                    Text(risk).font(.system(size: 11)).foregroundStyle(GH.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GH.canvas, in: RoundedRectangle(cornerRadius: 7))
+            }
+        } else if !Snapshot.isRendering {
+            Button {
+                Task { await model.runSelfReview(id: pr.id) }
+            } label: {
+                Label(tr("Self-review"), systemImage: "sparkles")
+                    .font(.system(size: 10))
+            }
+            .controlSize(.small)
+            .buttonStyle(.borderless)
+            .disabled(!model.agentAvailable)
+        }
     }
 }
 
