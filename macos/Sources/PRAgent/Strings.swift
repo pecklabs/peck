@@ -26,10 +26,18 @@ enum I18n {
         "Waiting on:": "대기 중:",
         "Draft": "초안",
         "Self-review": "셀프 리뷰",
+        "Self-review failed": "셀프 리뷰 실패",
         "Peck is self-reviewing…": "Peck이 셀프 리뷰 중…",
-        "Ready for review": "리뷰 요청해도 좋아요",
-        "Fix before review": "리뷰 전 수정 필요",
-        "Minor notes": "참고 사항",
+        "Things to fix before requesting review": "리뷰 요청 전 확인할 것",
+        "Reviewers": "리뷰어",
+        "Comments": "코멘트",
+        "No comments yet.": "아직 코멘트가 없어요.",
+        "Couldn't load comments.": "코멘트를 불러오지 못했어요.",
+        "Review re-requested": "리뷰 재요청됨",
+        "Approved": "승인함",
+        "Requested changes": "변경 요청함",
+        "Commented": "코멘트함",
+        "Pending": "대기 중",
         "Conflict": "충돌",
         "Checks": "체크",
         // Quest (Peck world: egg → chick → chicken)
@@ -86,8 +94,8 @@ enum I18n {
         // Settings — behavior
         "Behavior": "동작",
         "Auto-review new requests": "새 요청 자동 리뷰",
-        "Self-review my new PRs": "내가 올린 새 PR 셀프 리뷰",
-        "Auto-submit agent verdict": "에이전트 평결 자동 제출",
+        "Self-review my new PRs": "내 PR 셀프 리뷰",
+        "Auto-submit agent verdict": "에이전트 리뷰 자동 제출",
         "Desktop notifications": "데스크탑 알림",
         "Send test notification": "테스트 알림 보내기",
         "macOS is blocking Peck's notifications. Allow them in System Settings and this goes away.":
@@ -101,6 +109,8 @@ enum I18n {
         "Open skills folder": "스킬 폴더 열기",
         "App language": "앱 언어",
         "Anthropic API key": "Anthropic API 키",
+        "About": "정보",
+        "Version": "버전",
     ]
 }
 

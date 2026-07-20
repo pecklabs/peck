@@ -68,17 +68,129 @@ struct VerdictBadge: View {
     }
 }
 
-/// Verdict pill for a self-review of the user's own PR — reads as a readiness
-/// call ("ready" / "fix first"), not as a review to submit.
-struct SelfVerdictBadge: View {
+/// Verdict pill for the agent's pre-flight self-review: the ✨ + "Self-review"
+/// prefix says who produced it, the tinted (unfilled) style keeps it visually
+/// distinct from real reviewers' verdicts.
+struct SelfReviewBadge: View {
     var verdict: Verdict
+
     var body: some View {
+        Pill(text: "\(tr("Self-review")) · \(verdict.label)", color: color, systemImage: "sparkles")
+    }
+
+    private var color: Color {
         switch verdict {
-        case .approve: Pill(text: verdict.selfLabel, color: GH.success, systemImage: "checkmark.seal")
-        case .requestChanges: Pill(text: verdict.selfLabel, color: GH.attention, systemImage: "wrench.and.screwdriver")
-        case .comment: Pill(text: verdict.selfLabel, color: GH.accent, systemImage: "text.bubble")
+        case .approve: return GH.success
+        case .requestChanges: return GH.danger
+        case .comment: return GH.accent
         }
     }
+}
+
+extension ReviewerStatus.State {
+    var label: String {
+        switch self {
+        case .approved: return tr("Approved")
+        case .changesRequested: return tr("Requested changes")
+        case .commented: return tr("Commented")
+        case .pending: return tr("Pending")
+        }
+    }
+}
+
+/// A GitHub avatar, falling back to a person glyph while loading / when absent.
+struct AvatarView: View {
+    var url: String
+    var size: CGFloat = 20
+
+    var body: some View {
+        Group {
+            if let u = URL(string: url), !url.isEmpty {
+                AsyncImage(url: u) { phase in
+                    if let img = phase.image {
+                        img.resizable().scaledToFill()
+                    } else {
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "person.crop.circle.fill")
+            .resizable()
+            .foregroundStyle(GH.muted)
+    }
+}
+
+/// One reviewer, GitHub-sidebar style: avatar + login, status as an icon on
+/// the trailing edge (✓ approved, ± changes, 💬 commented, ● pending).
+struct ReviewerRow: View {
+    var reviewer: ReviewerStatus
+
+    var body: some View {
+        HStack(spacing: 7) {
+            AvatarView(url: reviewer.avatarUrl)
+            Text(reviewer.login).font(.system(size: 11, weight: .semibold))
+            if reviewer.isBot {
+                Image(systemName: "sparkles").font(.system(size: 9)).foregroundStyle(GH.done)
+            }
+            Spacer()
+            if reviewer.reRequested {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 10)).foregroundStyle(GH.muted)
+                    .help(tr("Review re-requested"))
+            }
+            statusIcon.help(reviewer.state.label)
+        }
+    }
+
+    @ViewBuilder private var statusIcon: some View {
+        switch reviewer.state {
+        case .approved:
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold)).foregroundStyle(GH.success)
+        case .changesRequested:
+            Image(systemName: "plusminus")
+                .font(.system(size: 11, weight: .bold)).foregroundStyle(GH.danger)
+        case .commented:
+            Image(systemName: "bubble.left")
+                .font(.system(size: 11)).foregroundStyle(GH.muted)
+        case .pending:
+            Circle().fill(GH.attention).frame(width: 8, height: 8)
+        }
+    }
+}
+
+/// Summary + risk/fix list as ONE selectable text block. Separate Text views
+/// each get their own selection, so the cursor would break between paragraphs —
+/// a single AttributedString keeps the whole explanation selectable in one drag.
+func reviewExplanation(summary: String, header: String? = nil, risks: [String]) -> AttributedString {
+    var out = AttributedString(summary)
+    out.font = .system(size: 11)
+    guard !risks.isEmpty else { return out }
+    if let header {
+        var h = AttributedString("\n\n\(header)")
+        h.font = .system(size: 9, weight: .semibold)
+        h.foregroundColor = GH.muted
+        out += h
+    }
+    for risk in risks {
+        var bullet = AttributedString("\n•  ")
+        bullet.font = .system(size: 11, weight: .bold)
+        bullet.foregroundColor = GH.attention
+        out += bullet
+        var r = AttributedString(risk)
+        r.font = .system(size: 11)
+        r.foregroundColor = GH.muted
+        out += r
+    }
+    return out
 }
 
 enum Open {

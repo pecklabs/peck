@@ -190,11 +190,12 @@ struct SettingsView: View {
 
             section(tr("Behavior")) {
                 languagePicker(tr("App language"), \.uiLanguage)
-                Stepper(value: Binding(
-                    get: { model.settings.pollIntervalSec },
-                    set: { var s = model.settings; s.pollIntervalSec = $0; model.saveSettings(s) }),
-                    in: 15...600, step: 15) {
-                    Text(I18n.isKorean ? "\(model.settings.pollIntervalSec)\u{cd08}\u{b9c8}\u{b2e4} \u{d655}\u{c778}" : "Poll every \(model.settings.pollIntervalSec)s").font(.system(size: 12))
+                settingRow(I18n.isKorean ? "\(model.settings.pollIntervalSec)\u{cd08}\u{b9c8}\u{b2e4} \u{d655}\u{c778}" : "Poll every \(model.settings.pollIntervalSec)s") {
+                    Stepper("", value: Binding(
+                        get: { model.settings.pollIntervalSec },
+                        set: { var s = model.settings; s.pollIntervalSec = $0; model.saveSettings(s) }),
+                        in: 15...600, step: 15)
+                        .labelsHidden()
                 }
                 toggle(tr("Auto-review new requests"), \.autoReview)
                 toggle(tr("Self-review my new PRs"), \.selfReview)
@@ -222,8 +223,27 @@ struct SettingsView: View {
                         .controlSize(.small).buttonStyle(.borderless)
                 }
             }
+
+            section(tr("About")) {
+                HStack {
+                    Text("\(tr("Version")) \(Self.appVersion)").font(.system(size: 12))
+                    Spacer()
+                    Button(tr("Check for Updates…")) { model.checkForUpdates() }
+                        .controlSize(.small)
+                        .disabled(!model.canCheckForUpdates)
+                }
+                HStack {
+                    Button(tr("Quit Peck")) { NSApplication.shared.terminate(nil) }
+                        .controlSize(.small)
+                        .tint(GH.danger)
+                    Spacer()
+                }
+            }
         }
     }
+
+    private static let appVersion =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
 
     // MARK: Notifications
 
@@ -236,19 +256,23 @@ struct SettingsView: View {
     @ViewBuilder private var notificationControls: some View {
         let blocked = notifyStatus == .denied
 
-        Toggle(tr("Desktop notifications"), isOn: Binding(
-            get: { model.settings.notifications },
-            set: { on in
-                var s = model.settings
-                s.notifications = on
-                model.saveSettings(s)
-                guard on else { return }
-                Task {
-                    if notifyStatus == .notDetermined { notifyStatus = await Notifier.requestAuthorization() }
-                    if notifyStatus == .denied { Notifier.openSystemSettings() }
-                }
-            }))
-            .font(.system(size: 12))
+        settingRow(tr("Desktop notifications")) {
+            Toggle("", isOn: Binding(
+                get: { model.settings.notifications },
+                set: { on in
+                    var s = model.settings
+                    s.notifications = on
+                    model.saveSettings(s)
+                    guard on else { return }
+                    Task {
+                        if notifyStatus == .notDetermined { notifyStatus = await Notifier.requestAuthorization() }
+                        if notifyStatus == .denied { Notifier.openSystemSettings() }
+                    }
+                }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        }
 
         if model.settings.notifications, blocked {
             VStack(alignment: .leading, spacing: 6) {
@@ -287,10 +311,24 @@ struct SettingsView: View {
     }
 
     private func toggle(_ title: String, _ keyPath: WritableKeyPath<AppSettings, Bool>) -> some View {
-        Toggle(title, isOn: Binding(
-            get: { model.settings[keyPath: keyPath] },
-            set: { var s = model.settings; s[keyPath: keyPath] = $0; model.saveSettings(s) }))
-            .font(.system(size: 12))
+        settingRow(title) {
+            Toggle("", isOn: Binding(
+                get: { model.settings[keyPath: keyPath] },
+                set: { var s = model.settings; s[keyPath: keyPath] = $0; model.saveSettings(s) }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        }
+    }
+
+    /// Full-width settings row: label on the left, control pinned to the right.
+    private func settingRow<C: View>(_ title: String, @ViewBuilder _ control: () -> C) -> some View {
+        HStack {
+            Text(title).font(.system(size: 12))
+            Spacer()
+            control()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {

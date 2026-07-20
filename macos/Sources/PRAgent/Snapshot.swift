@@ -16,6 +16,10 @@ enum Snapshot {
                model: model, to: outDir + "/my-prs.png")
         render(SnapScreen(active: .reviews, tray: model.tray) { reviewsBody(model) },
                model: model, to: outDir + "/reviews.png")
+        render(PeckWindowRoot()
+                .environment(\.peckWindowMode, true)
+                .frame(width: 960, height: 900, alignment: .top),
+               model: model, to: outDir + "/window.png")
         exit(0)
     }
 
@@ -53,12 +57,18 @@ enum Snapshot {
                 title: "feat(auth): OAuth device-flow login", url: "", isDraft: false,
                 reviewDecision: .approved, mergeable: .conflicting, checks: .success,
                 approvedCount: 2, changesRequestedCount: 0, pendingReviewers: [],
-                updatedAt: ago(900), requiredApprovals: 2, commentedCount: 1, reviewedCount: 2, botReviewCount: 1),
+                updatedAt: ago(900), requiredApprovals: 2, commentedCount: 1, reviewedCount: 2, botReviewCount: 1,
+                reviewers: [ReviewerStatus(login: "lee", state: .approved),
+                            ReviewerStatus(login: "dana", state: .approved),
+                            ReviewerStatus(login: "monalisa", state: .commented),
+                            ReviewerStatus(login: "wiz-scanner[bot]", state: .approved, isBot: true)]),
             MyPullRequest(id: "acme/api#88", owner: "acme", repo: "api", number: 88,
                 title: "fix(api): handle null user on /v2 submission", url: "", isDraft: false,
                 reviewDecision: nil, mergeable: .mergeable, checks: .pending,
                 approvedCount: 1, changesRequestedCount: 0, pendingReviewers: ["dana"],
                 updatedAt: ago(3600), requiredApprovals: 2, commentedCount: 0, reviewedCount: 1, botReviewCount: 0,
+                reviewers: [ReviewerStatus(login: "lee", state: .approved),
+                            ReviewerStatus(login: "dana", state: .pending)],
                 selfReview: ReviewDraft(
                     summary: "Guards the /v2 submission handler against a null user and returns 401 instead of crashing. Small and focused; the fix matches the linked issue.",
                     verdict: .requestChanges, body: "",
@@ -102,6 +112,17 @@ enum Snapshot {
                     verdict: .approve, body: "",
                     risks: [], comments: [], model: "claude-cli",
                     skillsApplied: ["default-review"], generatedAt: now, error: nil)),
+        ]
+        m.prComments["acme/web#142"] = [
+            PrComment(id: "c1", author: "monalisa", avatarUrl: "",
+                      body: "Device-flow polling every 2s feels aggressive — can we back off to 5s like the RFC suggests?",
+                      createdAt: ago(5400)),
+            PrComment(id: "c2", author: "dana", avatarUrl: "",
+                      body: "nit: rename `tok` → `deviceToken` for clarity",
+                      createdAt: ago(4000), path: "Sources/Auth/DeviceFlow.swift"),
+            PrComment(id: "c3", author: "lee", avatarUrl: "",
+                      body: "Clean implementation — polling backoff reads well now.",
+                      createdAt: ago(2500), verdict: "APPROVED"),
         ]
         m.tray = TrayStatus.derive(connected: true, queue: m.reviewQueue, myPrs: m.myPrs)
         return m

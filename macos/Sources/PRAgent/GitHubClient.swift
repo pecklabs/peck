@@ -244,8 +244,8 @@ final class GitHubClient {
             nodes { ... on PullRequest {
               \(prFields)
               reviewDecision mergeable
-              reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
-              latestReviews(first: 50) { nodes { state author { login __typename } } }
+              reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
+              latestReviews(first: 50) { nodes { state author { login avatarUrl __typename } } }
               baseRef { branchProtectionRule { requiredApprovingReviewCount } }
               commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
             } }
@@ -261,19 +261,50 @@ final class GitHubClient {
             let repoName = repo["name"] as? String ?? ""
             let allReviews = ((node["latestReviews"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
             // Exclude bots (e.g. wiz-…[bot]) — they're not requested human reviewers.
-            let reviews = allReviews.filter { r in
+            func isBotReview(_ r: [String: Any]) -> Bool {
                 let author = r["author"] as? [String: Any]
-                let isBot = (author?["__typename"] as? String) == "Bot"
+                return (author?["__typename"] as? String) == "Bot"
                     || (author?["login"] as? String)?.hasSuffix("[bot]") == true
-                return !isBot
             }
+            let reviews = allReviews.filter { !isBotReview($0) }
             let approvedCount = reviews.filter { ($0["state"] as? String) == "APPROVED" }.count
             let changesRequestedCount = reviews.filter { ($0["state"] as? String) == "CHANGES_REQUESTED" }.count
             let commentedCount = reviews.filter { ($0["state"] as? String) == "COMMENTED" }.count
             let reviewedCount = reviews.count
             let botReviewCount = allReviews.count - reviews.count
-            let pendingReviewers: [String] = (((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
-                .compactMap { ($0["requestedReviewer"] as? [String: Any])?["login"] as? String }
+            let pendingNodes = (((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
+                .compactMap { $0["requestedReviewer"] as? [String: Any] }
+            let pendingReviewers: [String] = pendingNodes.compactMap { $0["login"] as? String }
+
+            func reviewerState(_ s: String?) -> ReviewerStatus.State? {
+                switch s {
+                case "APPROVED": return .approved
+                case "CHANGES_REQUESTED": return .changesRequested
+                case "COMMENTED": return .commented
+                default: return nil // DISMISSED/PENDING carry no current verdict
+                }
+            }
+            func status(_ r: [String: Any], isBot: Bool) -> ReviewerStatus? {
+                guard let author = r["author"] as? [String: Any],
+                      let login = author["login"] as? String,
+                      let state = reviewerState(r["state"] as? String) else { return nil }
+                return ReviewerStatus(login: login, state: state, isBot: isBot,
+                                      avatarUrl: author["avatarUrl"] as? String ?? "")
+            }
+            var reviewers: [ReviewerStatus] = reviews.compactMap { status($0, isBot: false) }
+            for n in pendingNodes {
+                guard let login = n["login"] as? String else { continue }
+                // A re-requested reviewer shows up in BOTH latestReviews and
+                // reviewRequests — merge into one row flagged as re-requested
+                // instead of duplicating the login (ForEach ids collide).
+                if let i = reviewers.firstIndex(where: { $0.login == login }) {
+                    reviewers[i].reRequested = true
+                } else {
+                    reviewers.append(ReviewerStatus(login: login, state: .pending,
+                                                    avatarUrl: n["avatarUrl"] as? String ?? ""))
+                }
+            }
+            reviewers += allReviews.filter(isBotReview).compactMap { status($0, isBot: true) }
             let rollup = (((node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]])?
                 .first?["commit"] as? [String: Any])?["statusCheckRollup"] as? [String: Any]
             let checks = Self.mapChecks(rollup?["state"] as? String)
@@ -295,7 +326,8 @@ final class GitHubClient {
                 requiredApprovals: max(1, required ?? 1),
                 commentedCount: commentedCount,
                 reviewedCount: reviewedCount,
-                botReviewCount: botReviewCount
+                botReviewCount: botReviewCount,
+                reviewers: reviewers
             )
         }
     }
@@ -343,6 +375,72 @@ final class GitHubClient {
              additions: $0["additions"] as? Int ?? 0,
              deletions: $0["deletions"] as? Int ?? 0)
         }
+    }
+
+    /// All human-readable conversation on a PR: issue comments, inline review
+    /// comments, and review summaries with a body — oldest first.
+    func fetchPrComments(owner: String, repo: String, number: Int) async throws -> [PrComment] {
+        async let issueData = restJSONPages("/repos/\(owner)/\(repo)/issues/\(number)/comments")
+        async let inlineData = restJSONPages("/repos/\(owner)/\(repo)/pulls/\(number)/comments")
+        async let reviewData = restJSONPages("/repos/\(owner)/\(repo)/pulls/\(number)/reviews")
+        let (issue, inline, reviews) = try await (issueData, inlineData, reviewData)
+
+        func author(_ o: [String: Any]) -> (String, String) {
+            let u = o["user"] as? [String: Any]
+            return (u?["login"] as? String ?? "ghost", u?["avatar_url"] as? String ?? "")
+        }
+
+        var out: [PrComment] = []
+        for o in issue {
+            let (login, avatar) = author(o)
+            out.append(PrComment(id: "issue-\(o["id"] ?? UUID().uuidString)",
+                                 author: login, avatarUrl: avatar,
+                                 body: o["body"] as? String ?? "",
+                                 createdAt: date(o["created_at"])))
+        }
+        for o in inline {
+            let (login, avatar) = author(o)
+            out.append(PrComment(id: "inline-\(o["id"] ?? UUID().uuidString)",
+                                 author: login, avatarUrl: avatar,
+                                 body: o["body"] as? String ?? "",
+                                 createdAt: date(o["created_at"]),
+                                 path: o["path"] as? String))
+        }
+        for o in reviews {
+            let body = (o["body"] as? String) ?? ""
+            let state = o["state"] as? String
+            // Empty review bodies are noise here — verdicts already show in the
+            // reviewer list; pending reviews aren't public yet.
+            guard !body.isEmpty, state != "PENDING" else { continue }
+            let (login, avatar) = author(o)
+            out.append(PrComment(id: "review-\(o["id"] ?? UUID().uuidString)",
+                                 author: login, avatarUrl: avatar,
+                                 body: body,
+                                 createdAt: date(o["submitted_at"]),
+                                 verdict: state))
+        }
+        return out.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Fetches every page of a paginated array endpoint (100 per page, capped
+    /// at 5 pages). Throws on HTTP or parse errors instead of returning [] so
+    /// callers can tell "no comments" from "fetch failed".
+    private func restJSONPages(_ path: String, maxPages: Int = 5) async throws -> [[String: Any]] {
+        var all: [[String: Any]] = []
+        for page in 1...maxPages {
+            let req = try restRequest("\(path)?per_page=100&page=\(page)")
+            let (data, resp) = try await session.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                throw GitHubError(message: "GitHub returned status \(code)")
+            }
+            guard let chunk = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                throw GitHubError(message: "Malformed GitHub response")
+            }
+            all += chunk
+            if chunk.count < 100 { break }
+        }
+        return all
     }
 
     func submitReview(owner: String, repo: String, number: Int, verdict: Verdict,

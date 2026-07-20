@@ -10,7 +10,7 @@ BUILD_DIR=".build/${CONFIG}"
 APP="build/${APP_NAME}.app"
 
 # Overridable for releases / CI.
-APP_VERSION="${APP_VERSION:-0.2.0}"
+APP_VERSION="${APP_VERSION:-0.3.0}"
 APP_BUILD="${APP_BUILD:-${APP_VERSION}}"
 SU_FEED_URL="${SU_FEED_URL:-https://github.com/pecklabs/peck/releases/latest/download/appcast.xml}"
 SU_PUBLIC_KEY="${SU_PUBLIC_KEY:-nPiJbULahvPzeQB+20YmZR1d1DkEvkHr1J7NZU5rSBg=}"

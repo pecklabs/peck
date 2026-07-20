@@ -150,20 +150,9 @@ struct ReviewCard: View {
                 }
             }
             .onChange(of: draft.generatedAt) { _, _ in editedBody = draft.body }
-            Text(draft.summary).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
-
-            if !draft.risks.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(draft.risks.enumerated()), id: \.offset) { _, risk in
-                        HStack(alignment: .top, spacing: 5) {
-                            Image(systemName: "exclamationmark.circle").font(.system(size: 9))
-                                .foregroundStyle(GH.attention).padding(.top, 2)
-                            Text(risk).font(.system(size: 11)).foregroundStyle(GH.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-            }
+            Text(reviewExplanation(summary: draft.summary, risks: draft.risks))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
 
             // Editable review body. Auto-grows and never scrolls internally, so the
             // outer list scroll is never hijacked.
