@@ -31,6 +31,9 @@ cp "${BUILD_DIR}/PRAgent" "${APP}/Contents/MacOS/Peck"
 # Glass, macOS 26+) plus AppIcon.icns (raster fallback for older systems).
 # Finder / DMG / Spotlight; a menu-bar app has no Dock icon.
 if [ -d "AppIcon.icon" ]; then
+  # icon-info.plist is write-only: actool demands the flag, but nothing merges
+  # it — the Info.plist below hardcodes CFBundleIconFile/CFBundleIconName, so
+  # an actool failure (|| true) can't break any later step.
   xcrun actool AppIcon.icon \
     --compile "${APP}/Contents/Resources" \
     --app-icon AppIcon \
@@ -42,10 +45,15 @@ if [ -d "AppIcon.icon" ]; then
 fi
 # Older toolchains (Xcode < 26) don't understand Icon Composer .icon bundles —
 # actool silently emits nothing and the app ships with a generic Finder icon.
-# Fall back to the checked-in prebuilt .icns so the icon never goes missing.
+# Fall back to the checked-in AppIcon.icns: a deliberate degradation (classic
+# raster icon everywhere, no Liquid Glass Assets.car on macOS 26).
+# AppIcon.icns is NOT auto-generated from AppIcon.icon — after changing the
+# icon, rebuild on macOS 26 and refresh it:
+#   ./build.sh && cp build/Peck.app/Contents/Resources/AppIcon.icns AppIcon.icns
 if [ ! -f "${APP}/Contents/Resources/AppIcon.icns" ]; then
   if [ -f "AppIcon.icns" ]; then
-    echo "⚠ actool produced no AppIcon.icns (old Xcode?) — using prebuilt AppIcon.icns"
+    echo "⚠ actool produced no AppIcon.icns (old Xcode?) — using prebuilt AppIcon.icns" \
+         "(classic icon only; no Liquid Glass Assets.car)"
     cp AppIcon.icns "${APP}/Contents/Resources/AppIcon.icns"
   else
     echo "✗ no app icon produced and no prebuilt AppIcon.icns fallback" >&2
