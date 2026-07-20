@@ -53,10 +53,13 @@ final class AppModel: ObservableObject {
     private var seenMyPrIds: Set<String>?
     /// Successful self-review drafts, persisted so results survive a relaunch.
     private var storedSelfReviews: [String: ReviewDraft] = [:]
+    /// GitHub login the persisted self-review store belongs to.
+    private var selfReviewOwner: String?
 
     private let settingsKey = "settings"
     private let selfReviewSeenKey = "selfReviewSeen"
     private let selfReviewDraftsKey = "selfReviewDrafts"
+    private let selfReviewOwnerKey = "selfReviewOwner"
 
     init() {
         loadSettings()
@@ -75,6 +78,7 @@ final class AppModel: ObservableObject {
            let drafts = try? JSONDecoder().decode([String: ReviewDraft].self, from: data) {
             storedSelfReviews = drafts
         }
+        selfReviewOwner = UserDefaults.standard.string(forKey: selfReviewOwnerKey)
     }
 
     private func persistSelfReviewStore() {
@@ -84,6 +88,7 @@ final class AppModel: ObservableObject {
         if let data = try? JSONEncoder().encode(storedSelfReviews) {
             UserDefaults.standard.set(data, forKey: selfReviewDraftsKey)
         }
+        UserDefaults.standard.set(selfReviewOwner, forKey: selfReviewOwnerKey)
     }
 
     func bootstrap() {
@@ -331,9 +336,20 @@ final class AppModel: ObservableObject {
     /// actually on and runnable, so enabling it (or fixing the agent) later
     /// still picks up what was uploaded in the meantime.
     private func triggerSelfReviews() {
+        guard let login = user?.login else { return }
+        // The persisted store belongs to one GitHub account. On a different
+        // login, start over — otherwise the stale baseline would mass-trigger
+        // agent runs on every open PR of the new account.
+        if selfReviewOwner != login {
+            selfReviewOwner = login
+            seenMyPrIds = nil
+            storedSelfReviews = [:]
+        }
+
         let ready = Set(myPrs.filter { !$0.isDraft }.map(\.id))
         if seenMyPrIds == nil {
-            // Very first sync ever: baseline, don't review-bomb existing PRs.
+            // Very first sync for this account: baseline, don't review-bomb
+            // existing PRs.
             seenMyPrIds = ready
         } else if settings.selfReview && agentAvailable {
             for p in myPrs where !p.isDraft && !(seenMyPrIds?.contains(p.id) ?? false)
@@ -342,9 +358,13 @@ final class AppModel: ObservableObject {
             }
             seenMyPrIds?.formUnion(ready)
         }
-        // Drop stored results for PRs that are no longer open.
-        let openIds = Set(myPrs.map(\.id))
-        storedSelfReviews = storedSelfReviews.filter { openIds.contains($0.key) }
+        // Drop stored results for PRs that are no longer open — but never on an
+        // empty list, where a degenerate (yet "successful") sync would wipe
+        // every stored result at once.
+        if !myPrs.isEmpty {
+            let openIds = Set(myPrs.map(\.id))
+            storedSelfReviews = storedSelfReviews.filter { openIds.contains($0.key) }
+        }
         persistSelfReviewStore()
     }
 
@@ -463,6 +483,9 @@ final class AppModel: ObservableObject {
         do {
             prComments[id] = try await github.fetchPrComments(owner: owner, repo: repo, number: number)
             commentsFailed.remove(id)
+        } catch is CancellationError {
+            // Selection changed and .task cancelled us — not a failure.
+        } catch let e as URLError where e.code == .cancelled {
         } catch {
             commentsFailed.insert(id)
         }
