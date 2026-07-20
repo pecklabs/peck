@@ -23,7 +23,6 @@ struct PRAgentApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let model = AppModel()
-    private var onboardingWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,41 +36,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         model.bootstrap()
 
         // Menu-bar apps have no window or Dock icon, so a fresh install looks like
-        // "nothing happened". Pop an onboarding window when there's no stored auth;
-        // close it once connected. We gate "show" on hasGitHubAuth (not just
-        // !connected) so a configured user doesn't see it flash while the saved
-        // login is still validating asynchronously at launch.
+        // "nothing happened". Open the app window (which shows onboarding while
+        // disconnected) when there's no stored auth. Gated on hasGitHubAuth (not
+        // just !connected) so a configured user doesn't see it flash while the
+        // saved login is still validating asynchronously at launch.
         // ($connected delivers its current value on subscribe.)
         model.$connected
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] connected in
                 guard let self else { return }
-                if connected { self.closeOnboarding() }
-                else if !self.model.hasGitHubAuth { self.showOnboarding() }
+                if !connected && !self.model.hasGitHubAuth {
+                    PeckWindow.open(model: self.model)
+                }
             }
             .store(in: &cancellables)
     }
 
-    private func showOnboarding() {
-        if onboardingWindow == nil {
-            let win = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 380, height: 360),
-                styleMask: [.titled, .closable, .fullSizeContentView],
-                backing: .buffered, defer: false)
-            win.title = "Peck"
-            win.titlebarAppearsTransparent = true
-            win.isReleasedWhenClosed = false
-            win.center()
-            win.contentView = NSHostingView(rootView: OnboardingView().environmentObject(model))
-            onboardingWindow = win
-        }
-        onboardingWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func closeOnboarding() {
-        onboardingWindow?.close()
+    /// Clicking the app icon (Dock, Launchpad, Finder) while running opens the
+    /// main window — what a normal app would do.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        PeckWindow.open(model: model)
+        return false
     }
 
     nonisolated func userNotificationCenter(
@@ -79,5 +65,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .sound]
+    }
+
+    /// Clicking a self-review notification opens the app window on My PRs.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let info = response.notification.request.content.userInfo
+        guard info["selfReviewPr"] is String else { return }
+        await MainActor.run { PeckWindow.open(model: self.model) }
     }
 }

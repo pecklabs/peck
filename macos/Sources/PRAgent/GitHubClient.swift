@@ -244,8 +244,8 @@ final class GitHubClient {
             nodes { ... on PullRequest {
               \(prFields)
               reviewDecision mergeable
-              reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
-              latestReviews(first: 50) { nodes { state author { login __typename } } }
+              reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
+              latestReviews(first: 50) { nodes { state author { login avatarUrl __typename } } }
               baseRef { branchProtectionRule { requiredApprovingReviewCount } }
               commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
             } }
@@ -261,19 +261,44 @@ final class GitHubClient {
             let repoName = repo["name"] as? String ?? ""
             let allReviews = ((node["latestReviews"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
             // Exclude bots (e.g. wiz-…[bot]) — they're not requested human reviewers.
-            let reviews = allReviews.filter { r in
+            func isBotReview(_ r: [String: Any]) -> Bool {
                 let author = r["author"] as? [String: Any]
-                let isBot = (author?["__typename"] as? String) == "Bot"
+                return (author?["__typename"] as? String) == "Bot"
                     || (author?["login"] as? String)?.hasSuffix("[bot]") == true
-                return !isBot
             }
+            let reviews = allReviews.filter { !isBotReview($0) }
             let approvedCount = reviews.filter { ($0["state"] as? String) == "APPROVED" }.count
             let changesRequestedCount = reviews.filter { ($0["state"] as? String) == "CHANGES_REQUESTED" }.count
             let commentedCount = reviews.filter { ($0["state"] as? String) == "COMMENTED" }.count
             let reviewedCount = reviews.count
             let botReviewCount = allReviews.count - reviews.count
-            let pendingReviewers: [String] = (((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
-                .compactMap { ($0["requestedReviewer"] as? [String: Any])?["login"] as? String }
+            let pendingNodes = (((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
+                .compactMap { $0["requestedReviewer"] as? [String: Any] }
+            let pendingReviewers: [String] = pendingNodes.compactMap { $0["login"] as? String }
+
+            func reviewerState(_ s: String?) -> ReviewerStatus.State? {
+                switch s {
+                case "APPROVED": return .approved
+                case "CHANGES_REQUESTED": return .changesRequested
+                case "COMMENTED": return .commented
+                default: return nil // DISMISSED/PENDING carry no current verdict
+                }
+            }
+            func status(_ r: [String: Any], isBot: Bool) -> ReviewerStatus? {
+                guard let author = r["author"] as? [String: Any],
+                      let login = author["login"] as? String,
+                      let state = reviewerState(r["state"] as? String) else { return nil }
+                return ReviewerStatus(login: login, state: state, isBot: isBot,
+                                      avatarUrl: author["avatarUrl"] as? String ?? "")
+            }
+            let reviewers: [ReviewerStatus] =
+                reviews.compactMap { status($0, isBot: false) }
+                + pendingNodes.compactMap { n -> ReviewerStatus? in
+                    guard let login = n["login"] as? String else { return nil }
+                    return ReviewerStatus(login: login, state: .pending,
+                                          avatarUrl: n["avatarUrl"] as? String ?? "")
+                }
+                + allReviews.filter(isBotReview).compactMap { status($0, isBot: true) }
             let rollup = (((node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]])?
                 .first?["commit"] as? [String: Any])?["statusCheckRollup"] as? [String: Any]
             let checks = Self.mapChecks(rollup?["state"] as? String)
@@ -295,7 +320,8 @@ final class GitHubClient {
                 requiredApprovals: max(1, required ?? 1),
                 commentedCount: commentedCount,
                 reviewedCount: reviewedCount,
-                botReviewCount: botReviewCount
+                botReviewCount: botReviewCount,
+                reviewers: reviewers
             )
         }
     }
@@ -343,6 +369,57 @@ final class GitHubClient {
              additions: $0["additions"] as? Int ?? 0,
              deletions: $0["deletions"] as? Int ?? 0)
         }
+    }
+
+    /// All human-readable conversation on a PR: issue comments, inline review
+    /// comments, and review summaries with a body — oldest first.
+    func fetchPrComments(owner: String, repo: String, number: Int) async throws -> [PrComment] {
+        async let issueData = restJSONArray("/repos/\(owner)/\(repo)/issues/\(number)/comments?per_page=100")
+        async let inlineData = restJSONArray("/repos/\(owner)/\(repo)/pulls/\(number)/comments?per_page=100")
+        async let reviewData = restJSONArray("/repos/\(owner)/\(repo)/pulls/\(number)/reviews?per_page=100")
+        let (issue, inline, reviews) = try await (issueData, inlineData, reviewData)
+
+        func author(_ o: [String: Any]) -> (String, String) {
+            let u = o["user"] as? [String: Any]
+            return (u?["login"] as? String ?? "ghost", u?["avatar_url"] as? String ?? "")
+        }
+
+        var out: [PrComment] = []
+        for o in issue {
+            let (login, avatar) = author(o)
+            out.append(PrComment(id: "issue-\(o["id"] ?? UUID().uuidString)",
+                                 author: login, avatarUrl: avatar,
+                                 body: o["body"] as? String ?? "",
+                                 createdAt: date(o["created_at"])))
+        }
+        for o in inline {
+            let (login, avatar) = author(o)
+            out.append(PrComment(id: "inline-\(o["id"] ?? UUID().uuidString)",
+                                 author: login, avatarUrl: avatar,
+                                 body: o["body"] as? String ?? "",
+                                 createdAt: date(o["created_at"]),
+                                 path: o["path"] as? String))
+        }
+        for o in reviews {
+            let body = (o["body"] as? String) ?? ""
+            let state = o["state"] as? String
+            // Empty review bodies are noise here — verdicts already show in the
+            // reviewer list; pending reviews aren't public yet.
+            guard !body.isEmpty, state != "PENDING" else { continue }
+            let (login, avatar) = author(o)
+            out.append(PrComment(id: "review-\(o["id"] ?? UUID().uuidString)",
+                                 author: login, avatarUrl: avatar,
+                                 body: body,
+                                 createdAt: date(o["submitted_at"]),
+                                 verdict: state))
+        }
+        return out.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    private func restJSONArray(_ path: String) async throws -> [[String: Any]] {
+        let req = try restRequest(path)
+        let (data, _) = try await session.data(for: req)
+        return (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
     }
 
     func submitReview(owner: String, repo: String, number: Int, verdict: Verdict,

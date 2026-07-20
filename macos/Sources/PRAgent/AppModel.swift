@@ -17,6 +17,9 @@ final class AppModel: ObservableObject {
     @Published var syncing = false
     @Published var errorMessage: String?
     @Published var skills: [SkillInfo] = []
+    /// Conversation per PR id, loaded lazily for the window's detail pane.
+    @Published var prComments: [String: [PrComment]] = [:]
+    @Published var commentsLoading: Set<String> = []
 
     private let github = GitHubClient.shared
     private var pollTask: Task<Void, Never>?
@@ -41,18 +44,44 @@ final class AppModel: ObservableObject {
     private var notifiedConflicts: Set<String> = []
     private var prevAllApproved = false
 
-    /// My non-draft PR ids seen so far. nil until the first sync — that sync only
-    /// records a baseline, so launching the app doesn't self-review every PR that
-    /// was already open. Anything appearing later was just uploaded.
+    /// My non-draft PR ids already baselined or self-reviewed. Persisted across
+    /// launches so restarting the app doesn't re-baseline (which would silently
+    /// skip PRs uploaded between runs). nil only on the very first sync ever —
+    /// that one records a baseline instead of review-bombing every open PR.
     private var seenMyPrIds: Set<String>?
+    /// Successful self-review drafts, persisted so results survive a relaunch.
+    private var storedSelfReviews: [String: ReviewDraft] = [:]
 
     private let settingsKey = "settings"
+    private let selfReviewSeenKey = "selfReviewSeen"
+    private let selfReviewDraftsKey = "selfReviewDrafts"
 
     init() {
         loadSettings()
         I18n.lang = settings.uiLanguage
         skills = Skills.info()
         hasAnthropicKey = Keychain.has(.anthropicKey)
+        loadSelfReviewStore()
+    }
+
+    private func loadSelfReviewStore() {
+        if let data = UserDefaults.standard.data(forKey: selfReviewSeenKey),
+           let ids = try? JSONDecoder().decode(Set<String>.self, from: data) {
+            seenMyPrIds = ids
+        }
+        if let data = UserDefaults.standard.data(forKey: selfReviewDraftsKey),
+           let drafts = try? JSONDecoder().decode([String: ReviewDraft].self, from: data) {
+            storedSelfReviews = drafts
+        }
+    }
+
+    private func persistSelfReviewStore() {
+        if let seen = seenMyPrIds, let data = try? JSONEncoder().encode(seen) {
+            UserDefaults.standard.set(data, forKey: selfReviewSeenKey)
+        }
+        if let data = try? JSONEncoder().encode(storedSelfReviews) {
+            UserDefaults.standard.set(data, forKey: selfReviewDraftsKey)
+        }
     }
 
     func bootstrap() {
@@ -219,7 +248,6 @@ final class AppModel: ObservableObject {
         connected = false
         reviewQueue = []
         myPrs = []
-        seenMyPrIds = nil
         recomputeTray()
     }
 
@@ -280,8 +308,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Preserve self-review results across refreshes. A self-review runs once per
-    /// upload (not per update), so it's kept even when the PR has new activity.
+    /// Preserve self-review results across refreshes (and restore persisted ones
+    /// after a relaunch). A self-review runs once per upload (not per update),
+    /// so it's kept even when the PR has new activity.
     private func mergeMyPrs(_ incoming: [MyPullRequest]) {
         let prev = Dictionary(uniqueKeysWithValues: myPrs.map { ($0.id, $0) })
         myPrs = incoming.map { p in
@@ -290,26 +319,31 @@ final class AppModel: ObservableObject {
                 p.selfReview = old.selfReview
                 p.selfReviewing = old.selfReviewing
             }
+            if p.selfReview == nil { p.selfReview = storedSelfReviews[p.id] }
             return p
         }
     }
 
-    /// Self-review each PR the user uploads while the app is running. Draft PRs
-    /// don't count until they're marked ready for review.
+    /// Self-review each PR the user uploads. Draft PRs don't count until they're
+    /// marked ready for review. PRs are only marked seen when self-review is
+    /// actually on and runnable, so enabling it (or fixing the agent) later
+    /// still picks up what was uploaded in the meantime.
     private func triggerSelfReviews() {
         let ready = Set(myPrs.filter { !$0.isDraft }.map(\.id))
-        guard var seen = seenMyPrIds else {
+        if seenMyPrIds == nil {
+            // Very first sync ever: baseline, don't review-bomb existing PRs.
             seenMyPrIds = ready
-            return
-        }
-        if settings.selfReview && agentAvailable {
-            for p in myPrs where !p.isDraft && !seen.contains(p.id)
+        } else if settings.selfReview && agentAvailable {
+            for p in myPrs where !p.isDraft && !(seenMyPrIds?.contains(p.id) ?? false)
                 && p.selfReview == nil && !p.selfReviewing {
                 Task { await self.runSelfReview(id: p.id) }
             }
+            seenMyPrIds?.formUnion(ready)
         }
-        seen.formUnion(ready)
-        seenMyPrIds = seen
+        // Drop stored results for PRs that are no longer open.
+        let openIds = Set(myPrs.map(\.id))
+        storedSelfReviews = storedSelfReviews.filter { openIds.contains($0.key) }
+        persistSelfReviewStore()
     }
 
     private func recomputeTray() {
@@ -402,9 +436,12 @@ final class AppModel: ObservableObject {
                 myPrs[i].selfReview = draft
                 myPrs[i].selfReviewing = false
             }
+            storedSelfReviews[id] = draft
+            seenMyPrIds?.insert(id)
+            persistSelfReviewStore()
             if settings.notifications {
-                Notifier.post(title: "Peck self-review · \(draft.verdict.selfLabel)", body: pr.title,
-                              subtitle: pr.nameWithNumber)
+                Notifier.post(title: "Peck self-review · \(draft.verdict.label)", body: pr.title,
+                              subtitle: pr.nameWithNumber, userInfo: ["selfReviewPr": id])
             }
         } catch {
             if let i = myPrs.firstIndex(where: { $0.id == id }) {
@@ -414,6 +451,15 @@ final class AppModel: ObservableObject {
                     model: settings.model, skillsApplied: [], generatedAt: Date(),
                     error: error.localizedDescription)
             }
+        }
+    }
+
+    func loadComments(owner: String, repo: String, number: Int, id: String) async {
+        if commentsLoading.contains(id) { return }
+        commentsLoading.insert(id)
+        defer { commentsLoading.remove(id) }
+        if let comments = try? await github.fetchPrComments(owner: owner, repo: repo, number: number) {
+            prComments[id] = comments
         }
     }
 

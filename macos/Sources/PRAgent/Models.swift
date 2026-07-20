@@ -13,15 +13,6 @@ enum Verdict: String, Codable, CaseIterable {
         }
     }
 
-    /// Reading of the verdict when the agent self-reviews the user's own PR —
-    /// a readiness call for the author, not a review that gets posted.
-    var selfLabel: String {
-        switch self {
-        case .approve: return tr("Ready for review")
-        case .requestChanges: return tr("Fix before review")
-        case .comment: return tr("Minor notes")
-        }
-    }
 }
 
 enum ReviewDecision: String, Codable {
@@ -88,6 +79,32 @@ struct ReviewRequest: Identifiable, Equatable {
     var nameWithNumber: String { "\(owner)/\(repo) #\(number)" }
 }
 
+/// One reviewer's latest state on a PR of mine.
+struct ReviewerStatus: Codable, Equatable, Identifiable {
+    enum State: String, Codable {
+        case approved, changesRequested, commented, pending
+    }
+    var id: String { login }
+    var login: String
+    var state: State
+    var isBot: Bool = false
+    var avatarUrl: String = ""
+}
+
+/// A comment on a PR: discussion comment, inline review comment (has a path),
+/// or a review summary (has a verdict).
+struct PrComment: Identifiable, Equatable {
+    var id: String
+    var author: String
+    var avatarUrl: String
+    var body: String
+    var createdAt: Date
+    /// File the comment is anchored to, for inline review comments.
+    var path: String?
+    /// Review state (APPROVED / CHANGES_REQUESTED / …) when this is a review summary.
+    var verdict: String?
+}
+
 struct MyPullRequest: Identifiable, Equatable {
     var id: String
     var owner: String
@@ -111,6 +128,8 @@ struct MyPullRequest: Identifiable, Equatable {
     var reviewedCount: Int = 0
     /// Reviews left by bots (shown separately, excluded from human counts).
     var botReviewCount: Int = 0
+    /// Per-reviewer latest state (humans first, then pending, bots last).
+    var reviewers: [ReviewerStatus] = []
     /// One-shot agent self-review, generated when the PR is first uploaded.
     var selfReview: ReviewDraft? = nil
     var selfReviewing: Bool = false

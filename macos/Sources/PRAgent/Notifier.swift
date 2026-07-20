@@ -33,13 +33,15 @@ enum Notifier {
         }
     }
 
-    static func post(title: String, body: String, subtitle: String? = nil) {
+    static func post(title: String, body: String, subtitle: String? = nil,
+                     userInfo: [AnyHashable: Any] = [:]) {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         if let subtitle { content.subtitle = subtitle }
         content.body = body
         content.sound = .default
+        content.userInfo = userInfo
         let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(req, withCompletionHandler: nil)
     }

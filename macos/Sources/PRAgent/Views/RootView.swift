@@ -5,6 +5,7 @@ enum Tab: Hashable { case myPrs, reviews, settings }
 
 struct RootView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismissPopover
     @State private var tab: Tab = .myPrs
 
     private var effectiveTab: Tab { model.connected ? tab : .settings }
@@ -43,6 +44,7 @@ struct RootView: View {
                 }
                 Button { Task { await model.sync() } } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .medium))
                         .rotationEffect(.degrees(model.syncing ? 360 : 0))
                         .animation(model.syncing ? .linear(duration: 1).repeatForever(autoreverses: false) : .default,
                                    value: model.syncing)
@@ -50,19 +52,15 @@ struct RootView: View {
                 .buttonStyle(.borderless)
                 .help("Sync now")
             }
-            Menu {
-                Button(tr("Settings")) { tab = .settings }
-                Button(tr("Sync now")) { Task { await model.sync() } }
-                if model.canCheckForUpdates {
-                    Button(tr("Check for Updates…")) { model.checkForUpdates() }
-                }
-                Divider()
-                Button(tr("Quit Peck")) { NSApplication.shared.terminate(nil) }
+            Button {
+                dismissPopover()
+                PeckWindow.open(model: model)
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 13, weight: .medium))
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            .buttonStyle(.borderless)
+            .help("Open as a window")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
