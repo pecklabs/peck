@@ -34,7 +34,9 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    # macos-26: actool must understand Icon Composer .icon bundles (Xcode 26) —
+    # older images silently drop the app icon (build.sh still has an .icns fallback).
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 

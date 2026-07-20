@@ -38,7 +38,19 @@ if [ -d "AppIcon.icon" ]; then
     --minimum-deployment-target 14.0 \
     --target-device mac \
     --output-partial-info-plist "build/icon-info.plist" \
-    --output-format human-readable-text >/dev/null
+    --output-format human-readable-text >/dev/null || true
+fi
+# Older toolchains (Xcode < 26) don't understand Icon Composer .icon bundles —
+# actool silently emits nothing and the app ships with a generic Finder icon.
+# Fall back to the checked-in prebuilt .icns so the icon never goes missing.
+if [ ! -f "${APP}/Contents/Resources/AppIcon.icns" ]; then
+  if [ -f "AppIcon.icns" ]; then
+    echo "⚠ actool produced no AppIcon.icns (old Xcode?) — using prebuilt AppIcon.icns"
+    cp AppIcon.icns "${APP}/Contents/Resources/AppIcon.icns"
+  else
+    echo "✗ no app icon produced and no prebuilt AppIcon.icns fallback" >&2
+    exit 1
+  fi
 fi
 
 # SwiftPM resource bundle (skills, assets) — Bundle.module resolves it from Resources/.
