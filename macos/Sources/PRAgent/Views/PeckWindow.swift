@@ -27,6 +27,16 @@ struct SnapScroll<Content: View>: View {
     }
 }
 
+/// Section + selection of the app window, held outside the view tree so
+/// openers (notification clicks, popover rows) can steer the window to a
+/// specific PR.
+@MainActor
+final class PeckWindowState: ObservableObject {
+    @Published var section: WindowSection = .myPrs
+    @Published var selectedMyPr: String?
+    @Published var selectedReview: String?
+}
+
 /// The whole app as a resizable window, kept alive across close/reopen so
 /// size, section, and selection survive. Unlike the popover it has a sidebar
 /// (My PRs / Reviews / Settings), and each PR section is a master-detail
@@ -35,8 +45,14 @@ struct SnapScroll<Content: View>: View {
 @MainActor
 enum PeckWindow {
     private static var window: NSWindow?
+    static let state = PeckWindowState()
 
-    static func open(model: AppModel) {
+    /// Opens the window; with `focusMyPr` it lands on My PRs with that PR selected.
+    static func open(model: AppModel, focusMyPr prId: String? = nil) {
+        if let prId {
+            state.section = .myPrs
+            state.selectedMyPr = prId
+        }
         if window == nil {
             let win = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 960, height: 680),
@@ -70,11 +86,9 @@ enum WindowSection: Hashable { case myPrs, reviews, settings }
 
 struct PeckWindowRoot: View {
     @EnvironmentObject var model: AppModel
-    @State private var section: WindowSection = .myPrs
-    @State private var selectedMyPr: String?
-    @State private var selectedReview: String?
+    @ObservedObject private var state = PeckWindow.state
 
-    private var effectiveSection: WindowSection { model.connected ? section : .settings }
+    private var effectiveSection: WindowSection { model.connected ? state.section : .settings }
 
     var body: some View {
         Group {
@@ -138,7 +152,7 @@ struct PeckWindowRoot: View {
     }
 
     private func sideItem(_ title: String, icon: String, _ value: WindowSection, count: Int) -> some View {
-        Button { section = value } label: {
+        Button { state.section = value } label: {
             HStack(spacing: 7) {
                 Image(systemName: icon).font(.system(size: 12)).frame(width: 16)
                 Text(title).font(.system(size: 12, weight: effectiveSection == value ? .semibold : .regular))
@@ -159,8 +173,8 @@ struct PeckWindowRoot: View {
 
     @ViewBuilder private var content: some View {
         switch effectiveSection {
-        case .myPrs: MyPrsSplitView(selection: $selectedMyPr)
-        case .reviews: ReviewsSplitView(selection: $selectedReview)
+        case .myPrs: MyPrsSplitView(selection: $state.selectedMyPr)
+        case .reviews: ReviewsSplitView(selection: $state.selectedReview)
         case .settings:
             SettingsView()
         }
@@ -325,7 +339,16 @@ struct CommentsSection: View {
                 Spacer()
             }
             let comments = model.prComments[prId] ?? []
-            if comments.isEmpty {
+            if model.commentsFailed.contains(prId) && comments.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(GH.attention)
+                    Text(tr("Couldn't load comments.")).font(.system(size: 11)).foregroundStyle(GH.muted)
+                    Button(tr("Retry")) {
+                        Task { await model.loadComments(owner: owner, repo: repo, number: number, id: prId) }
+                    }
+                    .controlSize(.small)
+                }
+            } else if comments.isEmpty {
                 if !model.commentsLoading.contains(prId) {
                     Text(tr("No comments yet.")).font(.system(size: 11)).foregroundStyle(GH.muted)
                 }

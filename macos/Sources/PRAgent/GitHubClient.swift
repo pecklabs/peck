@@ -291,14 +291,20 @@ final class GitHubClient {
                 return ReviewerStatus(login: login, state: state, isBot: isBot,
                                       avatarUrl: author["avatarUrl"] as? String ?? "")
             }
-            let reviewers: [ReviewerStatus] =
-                reviews.compactMap { status($0, isBot: false) }
-                + pendingNodes.compactMap { n -> ReviewerStatus? in
-                    guard let login = n["login"] as? String else { return nil }
-                    return ReviewerStatus(login: login, state: .pending,
-                                          avatarUrl: n["avatarUrl"] as? String ?? "")
+            var reviewers: [ReviewerStatus] = reviews.compactMap { status($0, isBot: false) }
+            for n in pendingNodes {
+                guard let login = n["login"] as? String else { continue }
+                // A re-requested reviewer shows up in BOTH latestReviews and
+                // reviewRequests — merge into one row flagged as re-requested
+                // instead of duplicating the login (ForEach ids collide).
+                if let i = reviewers.firstIndex(where: { $0.login == login }) {
+                    reviewers[i].reRequested = true
+                } else {
+                    reviewers.append(ReviewerStatus(login: login, state: .pending,
+                                                    avatarUrl: n["avatarUrl"] as? String ?? ""))
                 }
-                + allReviews.filter(isBotReview).compactMap { status($0, isBot: true) }
+            }
+            reviewers += allReviews.filter(isBotReview).compactMap { status($0, isBot: true) }
             let rollup = (((node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]])?
                 .first?["commit"] as? [String: Any])?["statusCheckRollup"] as? [String: Any]
             let checks = Self.mapChecks(rollup?["state"] as? String)
@@ -374,9 +380,9 @@ final class GitHubClient {
     /// All human-readable conversation on a PR: issue comments, inline review
     /// comments, and review summaries with a body — oldest first.
     func fetchPrComments(owner: String, repo: String, number: Int) async throws -> [PrComment] {
-        async let issueData = restJSONArray("/repos/\(owner)/\(repo)/issues/\(number)/comments?per_page=100")
-        async let inlineData = restJSONArray("/repos/\(owner)/\(repo)/pulls/\(number)/comments?per_page=100")
-        async let reviewData = restJSONArray("/repos/\(owner)/\(repo)/pulls/\(number)/reviews?per_page=100")
+        async let issueData = restJSONPages("/repos/\(owner)/\(repo)/issues/\(number)/comments")
+        async let inlineData = restJSONPages("/repos/\(owner)/\(repo)/pulls/\(number)/comments")
+        async let reviewData = restJSONPages("/repos/\(owner)/\(repo)/pulls/\(number)/reviews")
         let (issue, inline, reviews) = try await (issueData, inlineData, reviewData)
 
         func author(_ o: [String: Any]) -> (String, String) {
@@ -416,10 +422,25 @@ final class GitHubClient {
         return out.sorted { $0.createdAt < $1.createdAt }
     }
 
-    private func restJSONArray(_ path: String) async throws -> [[String: Any]] {
-        let req = try restRequest(path)
-        let (data, _) = try await session.data(for: req)
-        return (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
+    /// Fetches every page of a paginated array endpoint (100 per page, capped
+    /// at 5 pages). Throws on HTTP or parse errors instead of returning [] so
+    /// callers can tell "no comments" from "fetch failed".
+    private func restJSONPages(_ path: String, maxPages: Int = 5) async throws -> [[String: Any]] {
+        var all: [[String: Any]] = []
+        for page in 1...maxPages {
+            let req = try restRequest("\(path)?per_page=100&page=\(page)")
+            let (data, resp) = try await session.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                throw GitHubError(message: "GitHub returned status \(code)")
+            }
+            guard let chunk = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                throw GitHubError(message: "Malformed GitHub response")
+            }
+            all += chunk
+            if chunk.count < 100 { break }
+        }
+        return all
     }
 
     func submitReview(owner: String, repo: String, number: Int, verdict: Verdict,

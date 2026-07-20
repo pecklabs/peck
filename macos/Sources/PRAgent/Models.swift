@@ -89,6 +89,8 @@ struct ReviewerStatus: Codable, Equatable, Identifiable {
     var state: State
     var isBot: Bool = false
     var avatarUrl: String = ""
+    /// Review was re-requested after this reviewer already reviewed.
+    var reRequested: Bool = false
 }
 
 /// A comment on a PR: discussion comment, inline review comment (has a path),

@@ -67,13 +67,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         [.banner, .sound]
     }
 
-    /// Clicking a self-review notification opens the app window on My PRs.
+    /// Clicking a self-review notification opens the app window on My PRs
+    /// with that PR selected.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
         let info = response.notification.request.content.userInfo
-        guard info["selfReviewPr"] is String else { return }
-        await MainActor.run { PeckWindow.open(model: self.model) }
+        guard let prId = info["selfReviewPr"] as? String else { return }
+        await MainActor.run { PeckWindow.open(model: self.model, focusMyPr: prId) }
     }
 }

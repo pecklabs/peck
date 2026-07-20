@@ -141,6 +141,11 @@ struct ReviewerRow: View {
                 Image(systemName: "sparkles").font(.system(size: 9)).foregroundStyle(GH.done)
             }
             Spacer()
+            if reviewer.reRequested {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 10)).foregroundStyle(GH.muted)
+                    .help(tr("Review re-requested"))
+            }
             statusIcon.help(reviewer.state.label)
         }
     }

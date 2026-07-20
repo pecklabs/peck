@@ -190,7 +190,7 @@ struct SelfReviewSection: View {
     private func badgeRow(_ draft: ReviewDraft) -> some View {
         Button {
             dismissPopover()
-            PeckWindow.open(model: model)
+            PeckWindow.open(model: model, focusMyPr: pr.id)
         } label: {
             SelfReviewBadgeRow(draft: draft)
         }

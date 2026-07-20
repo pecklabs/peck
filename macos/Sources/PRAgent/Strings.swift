@@ -32,6 +32,8 @@ enum I18n {
         "Reviewers": "리뷰어",
         "Comments": "코멘트",
         "No comments yet.": "아직 코멘트가 없어요.",
+        "Couldn't load comments.": "코멘트를 불러오지 못했어요.",
+        "Review re-requested": "리뷰 재요청됨",
         "Approved": "승인함",
         "Requested changes": "변경 요청함",
         "Commented": "코멘트함",

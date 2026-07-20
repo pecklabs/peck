@@ -20,6 +20,8 @@ final class AppModel: ObservableObject {
     /// Conversation per PR id, loaded lazily for the window's detail pane.
     @Published var prComments: [String: [PrComment]] = [:]
     @Published var commentsLoading: Set<String> = []
+    /// PR ids whose last comment fetch failed (distinct from "no comments").
+    @Published var commentsFailed: Set<String> = []
 
     private let github = GitHubClient.shared
     private var pollTask: Task<Void, Never>?
@@ -458,8 +460,11 @@ final class AppModel: ObservableObject {
         if commentsLoading.contains(id) { return }
         commentsLoading.insert(id)
         defer { commentsLoading.remove(id) }
-        if let comments = try? await github.fetchPrComments(owner: owner, repo: repo, number: number) {
-            prComments[id] = comments
+        do {
+            prComments[id] = try await github.fetchPrComments(owner: owner, repo: repo, number: number)
+            commentsFailed.remove(id)
+        } catch {
+            commentsFailed.insert(id)
         }
     }
 
