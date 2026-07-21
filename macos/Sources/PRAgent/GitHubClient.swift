@@ -10,6 +10,36 @@ struct PrContent {
     var body: String
     var diff: String
     var files: [(filename: String, status: String, additions: Int, deletions: Int)]
+    var conversation: PrConversation = .empty
+}
+
+/// Discussion that already happened on a PR. Fed to the agent so it stops
+/// re-raising points the humans have already settled.
+struct PrConversation {
+    struct Message {
+        var author: String
+        var body: String
+        var createdAt: Date
+        /// Review state (APPROVED / CHANGES_REQUESTED / …) for review summaries.
+        var verdict: String?
+    }
+
+    /// An inline review thread, anchored to a file, with its resolved state.
+    struct Thread {
+        var path: String?
+        var line: Int?
+        var isResolved: Bool
+        /// The diff hunk the thread was anchored to has since changed.
+        var isOutdated: Bool
+        var messages: [Message]
+    }
+
+    var threads: [Thread] = []
+    /// Top-level comments and review summaries, oldest first.
+    var comments: [Message] = []
+
+    static let empty = PrConversation()
+    var isEmpty: Bool { threads.isEmpty && comments.isEmpty }
 }
 
 /// Talks to the GitHub REST + GraphQL APIs using the token in the keychain.
@@ -347,8 +377,71 @@ final class GitHubClient {
         async let metaData = fetchPrMeta(owner: owner, repo: repo, number: number)
         async let diffData = fetchPrDiff(owner: owner, repo: repo, number: number)
         async let filesData = fetchPrFiles(owner: owner, repo: repo, number: number)
+        async let convoData = fetchPrConversation(owner: owner, repo: repo, number: number)
         let (meta, diff, files) = try await (metaData, diffData, filesData)
-        return PrContent(title: meta.0, body: meta.1, diff: diff, files: files)
+        // Discussion only sharpens the review — losing it shouldn't sink the run.
+        let convo = (try? await convoData) ?? .empty
+        return PrContent(title: meta.0, body: meta.1, diff: diff, files: files, conversation: convo)
+    }
+
+    /// Existing discussion on a PR: top-level comments, review summaries, and
+    /// inline threads with their resolved state. Goes through GraphQL because
+    /// REST has no way to tell a resolved thread from an open one.
+    func fetchPrConversation(owner: String, repo: String, number: Int) async throws -> PrConversation {
+        let query = """
+        query {
+          repository(owner: "\(owner)", name: "\(repo)") {
+            pullRequest(number: \(number)) {
+              comments(first: 50) { nodes { author { login } body createdAt } }
+              reviews(first: 50) { nodes { author { login } body state submittedAt } }
+              reviewThreads(first: 50) {
+                nodes {
+                  isResolved isOutdated path line
+                  comments(first: 20) { nodes { author { login } body createdAt } }
+                }
+              }
+            }
+          }
+        }
+        """
+        let data = try await graphql(query)
+        guard let pr = (data["repository"] as? [String: Any])?["pullRequest"] as? [String: Any] else {
+            return .empty
+        }
+
+        func nodes(_ v: Any?) -> [[String: Any]] {
+            ((v as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
+        }
+        func message(_ o: [String: Any], dateKey: String) -> PrConversation.Message {
+            PrConversation.Message(
+                author: (o["author"] as? [String: Any])?["login"] as? String ?? "ghost",
+                body: o["body"] as? String ?? "",
+                createdAt: date(o[dateKey]),
+                verdict: o["state"] as? String)
+        }
+
+        var comments = nodes(pr["comments"]).map { message($0, dateKey: "createdAt") }
+        for o in nodes(pr["reviews"]) {
+            // A bodyless review is just a verdict — the reviewer list already
+            // shows those, and pending reviews aren't public yet.
+            let body = (o["body"] as? String) ?? ""
+            guard !body.isEmpty, (o["state"] as? String) != "PENDING" else { continue }
+            comments.append(message(o, dateKey: "submittedAt"))
+        }
+        comments.sort { $0.createdAt < $1.createdAt }
+
+        let threads = nodes(pr["reviewThreads"]).compactMap { t -> PrConversation.Thread? in
+            let msgs = nodes(t["comments"]).map { message($0, dateKey: "createdAt") }
+            guard !msgs.isEmpty else { return nil }
+            return PrConversation.Thread(
+                path: t["path"] as? String,
+                line: t["line"] as? Int,
+                isResolved: t["isResolved"] as? Bool ?? false,
+                isOutdated: t["isOutdated"] as? Bool ?? false,
+                messages: msgs)
+        }
+
+        return PrConversation(threads: threads, comments: comments)
     }
 
     private func fetchPrMeta(owner: String, repo: String, number: Int) async throws -> (String, String) {
