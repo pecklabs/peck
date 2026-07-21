@@ -10,6 +10,12 @@ struct AgentError: LocalizedError {
 /// CLIs (which reuse the user's existing login — no API key needed).
 enum ReviewAgent {
     static let maxDiffChars = 60_000
+    /// Budget for the existing-discussion block. Well under the diff budget —
+    /// it's context for the diff, not the thing being reviewed.
+    static let maxConversationChars = 15_000
+    /// Long comments get clipped individually so one essay can't crowd out
+    /// every other thread.
+    static let maxCommentChars = 1_500
 
     /// An isolated empty directory to run the CLI backends in, so they don't scan
     /// the user's home / project and trigger Photos/Music/Files permission prompts.
@@ -79,6 +85,52 @@ enum ReviewAgent {
         var json: String
     }
 
+    static let conversationInstruction = """
+    EXISTING DISCUSSION:
+    This PR already has review discussion, reproduced above. It is context, not material to summarize back to the user.
+    - [RESOLVED] threads were settled and closed. Do not raise those points again unless the diff shows the problem is still present.
+    - [OPEN] threads are unsettled. If one still stands, reference it in a sentence rather than re-explaining it from scratch, and never restate a point someone has already made.
+    - Threads marked (outdated) were anchored to code that has since changed — check the current diff before trusting them.
+    - Spend the review on what nobody has raised yet. If everything worth flagging is already under discussion, say that plainly instead of manufacturing new findings.
+    """
+
+    /// Renders the prior discussion for the prompt, newest-relevant-first per
+    /// thread and clipped to the budget.
+    private static func renderConversation(_ c: PrConversation) -> String {
+        var out: [String] = []
+        var used = 0
+        var dropped = 0
+
+        func clip(_ s: String) -> String {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.count > maxCommentChars ? String(t.prefix(maxCommentChars)) + "… (clipped)" : t
+        }
+        func append(_ block: String) {
+            guard used + block.count <= maxConversationChars else { dropped += 1; return }
+            used += block.count
+            out.append(block)
+        }
+
+        for t in c.threads {
+            // An outdated thread often has no line — the code it pointed at is gone.
+            let anchor = [t.path, t.line.map(String.init)].compactMap { $0 }.joined(separator: ":")
+            let status = t.isResolved ? "[RESOLVED]" : "[OPEN]"
+            let outdated = t.isOutdated ? " (outdated)" : ""
+            let body = t.messages
+                .map { "  @\($0.author): \(clip($0.body))" }
+                .joined(separator: "\n")
+            append("\(status) \(anchor.isEmpty ? "(no file)" : anchor)\(outdated)\n\(body)")
+        }
+        for m in c.comments {
+            let verdict = m.verdict.map { " [\($0)]" } ?? ""
+            append("@\(m.author)\(verdict): \(clip(m.body))")
+        }
+        if dropped > 0 {
+            out.append("(\(dropped) more comment\(dropped == 1 ? "" : "s") omitted — discussion too long to include in full)")
+        }
+        return out.joined(separator: "\n\n")
+    }
+
     private static func languageInstruction(_ s: AppSettings, mode: Mode) -> String {
         switch mode {
         case .incoming:
@@ -114,6 +166,15 @@ enum ReviewAgent {
             .map { "- \($0.status) \($0.filename) (+\($0.additions)/-\($0.deletions))" }
             .joined(separator: "\n")
 
+        let discussion = content.conversation.isEmpty ? "" : """
+
+
+            Existing discussion on this PR:
+            \(renderConversation(content.conversation))
+
+            \(conversationInstruction)
+            """
+
         let userMsg = """
         Repository: \(owner)/\(repo)
         Pull request #\(number): \(content.title)
@@ -128,6 +189,7 @@ enum ReviewAgent {
         ```diff
         \(diff)
         ```
+        \(discussion)
 
         \(mode == .incoming ? "Review this PR." : "Self-review this PR the user authored.")
 
