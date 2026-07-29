@@ -1,4 +1,5 @@
 import Foundation
+import ReviewLogic
 
 struct GitHubError: LocalizedError {
     let message: String
@@ -244,24 +245,15 @@ final class GitHubClient {
             let repoName = repo["name"] as? String ?? ""
             let headOid = (((node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]])?
                 .first?["commit"] as? [String: Any])?["oid"] as? String
-            // Is the viewer currently in the pending requested-reviewers list?
-            // Submitting a review removes you from it; a re-request adds you back.
-            // This is the authoritative "you owe a review" signal — GitHub sets it
-            // on every re-request, even one at the same head commit (e.g. a COMMENTED
-            // reviewer re-requested after replies with no new push).
+            // A viewer currently in the pending requested-reviewers list always
+            // owes a review — even a re-request at the same head commit. See
+            // ReviewLogic.isAlreadyReviewed for the full rationale.
             let pendingReviewers = (((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
                 .compactMap { ($0["requestedReviewer"] as? [String: Any])?["login"] as? String }
-            let reRequested = pendingReviewers.contains(viewer.login)
-            // Otherwise fall back to head-commit matching: hide PRs whose search
-            // result is just stale after we already reviewed the current head.
             let reviewNodes = ((node["reviews"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
-            let reviewedHead = reviewNodes.contains { r in
-                let login = (r["author"] as? [String: Any])?["login"] as? String
-                let state = r["state"] as? String
-                let oid = (r["commit"] as? [String: Any])?["oid"] as? String
-                return login == viewer.login && state != "PENDING" && (headOid == nil || oid == headOid)
-            }
-            let reviewed = !reRequested && reviewedHead
+            let reviewed = ReviewLogic.isAlreadyReviewed(
+                reviewNodes: reviewNodes, pendingReviewerLogins: pendingReviewers,
+                headOid: headOid, viewerLogin: viewer.login)
             return ReviewRequest(
                 id: "\(owner)/\(repoName)#\(number)",
                 owner: owner, repo: repoName, number: number,
