@@ -1,4 +1,5 @@
 import Foundation
+import ReviewLogic
 
 struct GitHubError: LocalizedError {
     let message: String
@@ -228,6 +229,7 @@ final class GitHubClient {
             nodes { ... on PullRequest {
               \(prFields)
               reviews(last: 50) { nodes { author { login } state commit { oid } } }
+              reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }
               commits(last: 1) { nodes { commit { oid } } }
             } }
           }
@@ -243,13 +245,15 @@ final class GitHubClient {
             let repoName = repo["name"] as? String ?? ""
             let headOid = (((node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]])?
                 .first?["commit"] as? [String: Any])?["oid"] as? String
+            // A viewer currently in the pending requested-reviewers list always
+            // owes a review — even a re-request at the same head commit. See
+            // ReviewLogic.isAlreadyReviewed for the full rationale.
+            let pendingReviewers = (((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
+                .compactMap { ($0["requestedReviewer"] as? [String: Any])?["login"] as? String }
             let reviewNodes = ((node["reviews"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
-            let reviewed = reviewNodes.contains { r in
-                let login = (r["author"] as? [String: Any])?["login"] as? String
-                let state = r["state"] as? String
-                let oid = (r["commit"] as? [String: Any])?["oid"] as? String
-                return login == viewer.login && state != "PENDING" && (headOid == nil || oid == headOid)
-            }
+            let reviewed = ReviewLogic.isAlreadyReviewed(
+                reviewNodes: reviewNodes, pendingReviewerLogins: pendingReviewers,
+                headOid: headOid, viewerLogin: viewer.login)
             return ReviewRequest(
                 id: "\(owner)/\(repoName)#\(number)",
                 owner: owner, repo: repoName, number: number,
