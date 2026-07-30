@@ -31,6 +31,50 @@ public enum ReviewLogic {
             return login == viewerLogin && state != "PENDING" && (headOid == nil || oid == headOid)
         }
     }
+
+    /// Latch value recorded when a review is auto-submitted for a PR whose head
+    /// commit oid is unknown (a malformed GraphQL response — a real open PR
+    /// always has a commit). A git oid is never empty, so this can't collide with
+    /// a real head. It still marks the PR as auto-submitted, so a missing oid
+    /// degrades to "review once, don't re-post" rather than re-opening the loop.
+    public static let unknownHead = ""
+
+    /// Whether the auto-review loop should generate + auto-submit a review for a
+    /// pending PR this sync.
+    ///
+    /// Beyond the obvious guards (already reviewed, draft PR, a draft already
+    /// exists, a run in flight) this consults an *auto-submit latch*: the head
+    /// commit we last auto-submitted a review at (`unknownHead` if the oid was
+    /// missing). It closes a re-post loop — submitting a review bumps the PR's
+    /// `updatedAt`, which makes `mergeQueue` drop the local `draft`/`reviewing`
+    /// guards, and a `COMMENT` verdict never clears the server `reviewed` flag;
+    /// without the latch the loop would re-post the same review every sync.
+    ///
+    /// Once latched, we re-review only when the head has advanced to a *known,
+    /// different* commit. If either side is unknown (nil / `unknownHead`) we stay
+    /// put — a missing oid must never re-open the loop we're closing here.
+    public static func shouldAutoReview(
+        reviewed: Bool, isDraft: Bool, hasDraft: Bool, reviewing: Bool,
+        latchedHead: String?, currentHead: String?
+    ) -> Bool {
+        guard !reviewed, !isDraft, !hasDraft, !reviewing else { return false }
+        // Not yet auto-submitted for this PR → review it.
+        guard let latchedHead else { return true }
+        // Already auto-submitted; re-review only on a known head advance.
+        guard let currentHead, currentHead != unknownHead else { return false }
+        return currentHead != latchedHead
+    }
+
+    /// Prune the auto-submit latch (PR id → head oid) to the PRs still in the
+    /// fetched queue, so it can't grow without bound as PRs merge / close.
+    /// Never prunes on an empty id set — a degenerate but "successful" sync would
+    /// otherwise wipe every latch at once and let the whole queue re-post.
+    public static func prunedLatch(
+        _ latch: [String: String], keepingIds ids: Set<String>
+    ) -> [String: String] {
+        guard !ids.isEmpty else { return latch }
+        return latch.filter { ids.contains($0.key) }
+    }
 }
 
 /// Optimistic-submission bookkeeping for the review queue, kept pure so the

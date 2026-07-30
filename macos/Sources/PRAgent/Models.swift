@@ -72,6 +72,10 @@ struct ReviewRequest: Identifiable, Equatable {
     var changedFiles: Int
     var createdAt: Date
     var updatedAt: Date
+    /// Head commit oid of the PR. Used to re-arm auto-review when new commits
+    /// land: the auto-submit latch is keyed by this, so a bumped `updatedAt`
+    /// from our own review post doesn't trigger a re-review but a real push does.
+    var headOid: String?
     var reviewed: Bool
     var draft: ReviewDraft?
     var reviewing: Bool = false

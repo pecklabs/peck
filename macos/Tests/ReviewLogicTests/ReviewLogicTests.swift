@@ -80,6 +80,106 @@ final class ReviewLogicTests: XCTestCase {
     }
 }
 
+/// Auto-review re-fire guard. Auto-submitting a review bumps the PR's
+/// `updatedAt` (wiping the local draft/reviewing guards in mergeQueue) and a
+/// COMMENT verdict never clears the server `reviewed` flag — so without a latch
+/// the loop re-posts every sync. These pin down exactly when it may re-review.
+final class AutoReviewLatchTests: XCTestCase {
+    let head = "2b3c1c0"
+    let pr = "acme/web#137"
+
+    // Fresh pending PR, never auto-submitted → review it.
+    func testFreshPendingPRIsReviewed() {
+        XCTAssertTrue(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: nil, currentHead: head))
+    }
+
+    // The core fix: already auto-submitted at this exact head → do NOT re-post,
+    // even though `reviewed` came back false and the draft/reviewing guards were
+    // wiped by the updatedAt bump. This is the COMMENT infinite-loop regression.
+    func testLatchedAtSameHeadIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: head, currentHead: head))
+    }
+
+    // A new commit advances the head → latch no longer matches → re-review.
+    func testNewHeadReArmsReview() {
+        XCTAssertTrue(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: "old111", currentHead: head))
+    }
+
+    // Missing current oid on an already-latched PR must NOT re-open the loop —
+    // an unknown head can't prove the head advanced, so stay put. (Regression
+    // for the bug the review flagged: a nil headOid re-triggering re-posts.)
+    func testUnknownCurrentHeadOnLatchedPRIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: head, currentHead: nil))
+    }
+
+    // Latched at an unknown head (post succeeded but oid was missing), still
+    // unknown → skip; nothing proves the head moved.
+    func testLatchedUnknownAndStillUnknownIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: ReviewLogic.unknownHead, currentHead: nil))
+    }
+
+    // Latched at an unknown head, but a known head now lands → re-arm review.
+    func testLatchedUnknownThenKnownHeadReArms() {
+        XCTAssertTrue(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: ReviewLogic.unknownHead, currentHead: head))
+    }
+
+    // Server already reports the PR reviewed → skip regardless of the latch.
+    func testReviewedPRIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: true, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: nil, currentHead: head))
+    }
+
+    // Draft PRs aren't reviewed until marked ready.
+    func testDraftPRIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: true, hasDraft: false, reviewing: false,
+            latchedHead: nil, currentHead: head))
+    }
+
+    // An existing draft (including an errored one) is left alone — manual retry,
+    // so the loop can't spin on a failing agent.
+    func testExistingDraftIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: true, reviewing: false,
+            latchedHead: nil, currentHead: head))
+    }
+
+    // A run already in flight → don't dispatch a second.
+    func testInFlightReviewIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: true,
+            latchedHead: nil, currentHead: head))
+    }
+
+    // Prune drops latch entries for PRs no longer in the queue (merged / closed),
+    // so the map can't grow without bound.
+    func testPruneDropsClosedPRs() {
+        let pruned = ReviewLogic.prunedLatch(
+            [pr: head, "acme/api#92": "z9"], keepingIds: [pr])
+        XCTAssertEqual(pruned, [pr: head])
+    }
+
+    // Never prune on an empty queue: a degenerate but "successful" sync would
+    // otherwise wipe every latch and let the whole queue re-post.
+    func testPruneKeepsAllOnEmptyQueue() {
+        let latch = [pr: head]
+        XCTAssertEqual(ReviewLogic.prunedLatch(latch, keepingIds: []), latch)
+    }
+}
+
 /// Optimistic review-submission state machine — mirrors AppModel.submitReview /
 /// mergeQueue, so the risky "clear the card before the server confirms" path is
 /// covered without the GitHub API.
