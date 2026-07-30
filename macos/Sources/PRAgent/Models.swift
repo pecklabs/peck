@@ -302,6 +302,20 @@ enum AgentBackend: String, Codable, CaseIterable, Identifiable {
     var needsApiKey: Bool { self == .anthropicAPI }
 }
 
+/// How the app picks its light/dark appearance. `.system` follows the macOS
+/// setting (the historical behavior); `.light`/`.dark` override it.
+enum ThemeMode: String, Codable, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .system: return tr("System")
+        case .light: return tr("Light")
+        case .dark: return tr("Dark")
+        }
+    }
+}
+
 struct AppSettings: Codable, Equatable {
     var model: String = "claude-opus-4-8"
     var pollIntervalSec: Int = 60
@@ -318,11 +332,13 @@ struct AppSettings: Codable, Equatable {
     var reviewLanguage: String = "English"
     /// Language of the app's own UI.
     var uiLanguage: String = "English"
+    /// Light/dark appearance; `.system` follows the macOS setting.
+    var themeMode: ThemeMode = .system
 
     // Tolerate older persisted settings that lack the newer keys.
     enum CodingKeys: String, CodingKey {
         case model, pollIntervalSec, autoReview, selfReview, autoSubmit, notifications, agentBackend, useGhAuth
-        case explanationLanguage, reviewLanguage, uiLanguage
+        case explanationLanguage, reviewLanguage, uiLanguage, themeMode
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -338,6 +354,7 @@ struct AppSettings: Codable, Equatable {
         explanationLanguage = try c.decodeIfPresent(String.self, forKey: .explanationLanguage) ?? "한국어"
         reviewLanguage = try c.decodeIfPresent(String.self, forKey: .reviewLanguage) ?? "English"
         uiLanguage = try c.decodeIfPresent(String.self, forKey: .uiLanguage) ?? "English"
+        themeMode = try c.decodeIfPresent(ThemeMode.self, forKey: .themeMode) ?? .system
     }
 }
 
