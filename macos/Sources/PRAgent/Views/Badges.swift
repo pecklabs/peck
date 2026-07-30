@@ -1,4 +1,5 @@
 import SwiftUI
+import ReviewLogic
 
 func timeAgo(_ date: Date) -> String {
     let s = Int(Date().timeIntervalSince(date))
@@ -202,15 +203,14 @@ enum Open {
 
 /// Plain-text rendering of a self-review, for copy-to-clipboard. Mirrors what
 /// `reviewExplanation` shows on screen (verdict, summary, fix list) but as a
-/// string you can paste into a PR description or a message.
-func selfReviewPlainText(_ draft: ReviewDraft, header: String = tr("Things to fix before requesting review")) -> String {
-    var lines = ["\(tr("Self-review")) · \(draft.verdict.label)", "", draft.summary]
-    if !draft.risks.isEmpty {
-        lines.append("")
-        lines.append("\(header):")
-        for risk in draft.risks { lines.append("• \(risk)") }
-    }
-    return lines.joined(separator: "\n")
+/// string you can paste into a PR description or a message. The pure formatting
+/// lives in `ReviewLogic.reviewPlainText`; this wrapper supplies localization.
+func selfReviewPlainText(_ draft: ReviewDraft) -> String {
+    reviewPlainText(
+        title: "\(tr("Self-review")) · \(draft.verdict.label)",
+        summary: draft.summary,
+        risks: draft.risks,
+        fixesHeader: tr("Things to fix before requesting review"))
 }
 
 enum Clipboard {

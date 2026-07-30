@@ -102,3 +102,21 @@ public struct OptimisticReviews {
         inFlight.formIntersection(ids)
     }
 }
+
+/// Renders a review as plain text for copy-to-clipboard: a title line, the
+/// summary, then a bulleted fix list (omitted when there are no risks). Kept
+/// UI-free so the formatting can be unit-tested.
+public func reviewPlainText(
+    title: String,
+    summary: String,
+    risks: [String],
+    fixesHeader: String
+) -> String {
+    var lines = [title, "", summary]
+    if !risks.isEmpty {
+        lines.append("")
+        lines.append("\(fixesHeader):")
+        for risk in risks { lines.append("• \(risk)") }
+    }
+    return lines.joined(separator: "\n")
+}
