@@ -463,17 +463,21 @@ final class AppModel: ObservableObject {
         // Auto-generate a draft for every pending review that doesn't have one yet.
         // Decoupled from the notification dedup so it also runs on launch / after
         // restart. An errored draft is left alone (manual retry) to avoid loops.
-        // The auto-submit latch belongs to one GitHub account. On a different
-        // login, start over — otherwise a stale latch would suppress reviews for
-        // the new account's PRs. Kept OUTSIDE the autoReview gate on purpose: the
-        // latch is written on any auto-submit (including a manual review with
-        // auto-submit on, autoReview off), so its owner must track the account
-        // independently of autoReview.
+        // Auto-submit latch maintenance runs OUTSIDE the autoReview gate: the
+        // latch is written by ANY successful auto-submit — including a manual
+        // review with auto-submit on while autoReview is off — so its account
+        // scoping and bounding must not depend on autoReview being enabled.
+        // - Reset on a different login so a stale latch can't suppress the new
+        //   account's PRs.
+        // - Prune to the current queue so merged / closed PRs don't accumulate
+        //   forever; never on an empty queue (see prunedLatch).
         if let login = user?.login, autoSubmitOwner != login {
             autoSubmitOwner = login
             autoSubmittedHeads = [:]
-            persistAutoReviewStore()
         }
+        autoSubmittedHeads = ReviewLogic.prunedLatch(
+            autoSubmittedHeads, keepingIds: Set(queue.map(\.id)))
+        persistAutoReviewStore()
 
         if settings.autoReview {
             for r in queue where ReviewLogic.shouldAutoReview(
@@ -481,11 +485,6 @@ final class AppModel: ObservableObject {
                 reviewing: r.reviewing, latchedHead: autoSubmittedHeads[r.id], currentHead: r.headOid) {
                 Task { await self.runReview(id: r.id) }
             }
-            // Keep the latch bounded: drop entries for PRs that left the queue.
-            // Never on an empty queue (see prunedLatch).
-            autoSubmittedHeads = ReviewLogic.prunedLatch(
-                autoSubmittedHeads, keepingIds: Set(queue.map(\.id)))
-            persistAutoReviewStore()
         }
 
         for p in myPrs {
