@@ -32,9 +32,21 @@ struct ReviewQueueView: View {
 }
 
 /// The floating "Submitting…" indicator shown over a card during its optimistic
-/// loading beat. Uses the system Liquid Glass material on macOS 26+, falling back
-/// to a translucent capsule on older systems (deployment target is macOS 14).
+/// loading beat. Uses the system Liquid Glass material on macOS 26+.
+///
+/// macOS desaturates every system material (Liquid Glass included) to flat gray
+/// whenever its host window isn't active — and the menu-bar popover is a
+/// non-active accessory panel, so the glass there is *always* inactive/gray. A
+/// plain translucent capsule underlays the pill so that in the popover (or on
+/// older systems, deployment target is macOS 14) it still reads as a soft
+/// translucent capsule instead of dead gray; where the window is active (the
+/// detached window) the real glass renders on top.
 struct SubmittingPill: View {
+    // A plain colour — not a system material — so it keeps the same translucent
+    // look whether or not the host window is active.
+    private var fill: Color { GH.dyn(0xFFFFFF, 0x2D333B).opacity(0.62) }
+    private var stroke: Color { GH.dyn(0xFFFFFF, 0xFFFFFF).opacity(0.35) }
+
     var body: some View {
         let content = HStack(spacing: 7) {
             ProgressView().controlSize(.small)
@@ -42,14 +54,14 @@ struct SubmittingPill: View {
                 .font(.system(size: 11, weight: .medium)).foregroundStyle(GH.fg)
         }
         .padding(.horizontal, 13).padding(.vertical, 8)
+        .background(fill, in: .capsule)
+        .overlay(Capsule().strokeBorder(stroke, lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 6, y: 1)
 
         if #available(macOS 26.0, *) {
             content.glassEffect(.regular.interactive(), in: .capsule)
         } else {
             content
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(.white.opacity(0.3), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.12), radius: 6, y: 1)
         }
     }
 }
