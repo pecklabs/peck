@@ -348,10 +348,12 @@ final class AppModel: ObservableObject {
             if let old = prev[r.id], old.updatedAt == r.updatedAt {
                 r.draft = old.draft
                 r.reviewing = old.reviewing
-                // A sync can land mid-submit (during the loading beat); keep the
-                // spinner up so it doesn't flicker off before the card clears.
-                r.submitting = old.submitting
             }
+            // submitting is a local in-flight flag, not server content, so keep it
+            // regardless of updatedAt: a sync landing mid-beat (even one that also
+            // brings new PR activity) must not flicker the spinner off. submitReview
+            // clears it when the beat ends (or on rollback).
+            if let old = prev[r.id], old.submitting { r.submitting = true }
             // Keep an optimistically-submitted PR reviewed until the server
             // confirms it, so a fetch landing before the review propagates
             // doesn't resurrect the card. Confirmation clears the pending mark.
