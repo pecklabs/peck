@@ -38,12 +38,18 @@ public enum ReviewLogic {
 ///
 /// Two concerns are tracked separately:
 ///   • `inFlight` — any submission in progress, so a double-click is dropped.
+///     Taken at `begin`, the instant a verdict is hit.
 ///   • `pending`  — PRs shown reviewed optimistically, awaiting server
-///                  confirmation. Only verdicts that *retire* the card
-///                  (Approve / Request changes) go here. A Comment review does
-///                  NOT retire the card: GitHub keeps you a requested reviewer
-///                  and the server stays `reviewed == false`, so forcing it
-///                  would hide a PR you still owe a verdict on.
+///                  confirmation. Marked at `retire`, only *after* the
+///                  deliberate loading beat elapses and only for verdicts that
+///                  fulfill the request (Approve / Request changes). A Comment
+///                  review does NOT retire the card: GitHub keeps you a
+///                  requested reviewer and the server stays `reviewed == false`,
+///                  so forcing it would hide a PR you still owe a verdict on.
+///
+/// Splitting `begin` (lock now) from `retire` (mark pending later) matters: the
+/// card is held on screen with a spinner during the beat, so marking it pending
+/// up front would let a background sync landing mid-beat clear the card early.
 ///
 /// The rules ensure that a lagging server read can't resurrect a retired card
 /// mid-submit, yet a genuine re-request (reviewed goes false *after* the server
@@ -55,17 +61,22 @@ public struct OptimisticReviews {
     public private(set) var pending: Set<String> = []
     public init() {}
 
-    /// Register an in-flight submission. Returns false when one is already in
-    /// flight for this id — the caller should drop the duplicate.
-    ///
-    /// - Parameter retiresCard: true for verdicts that fulfill the review
-    ///   request (Approve / Request changes), which clear the card
-    ///   optimistically; false for a Comment review, which leaves it.
+    /// Take the in-flight lock for a submission. Returns false when one is
+    /// already in flight for this id — the caller should drop the duplicate.
+    /// Every verdict (including Comment) takes the lock so double-clicks are
+    /// dropped; retiring the card is a separate step (`retire`).
     @discardableResult
-    public mutating func begin(_ id: String, retiresCard: Bool) -> Bool {
-        guard inFlight.insert(id).inserted else { return false }
-        if retiresCard { pending.insert(id) }
-        return true
+    public mutating func begin(_ id: String) -> Bool {
+        inFlight.insert(id).inserted
+    }
+
+    /// Optimistically mark a PR reviewed once its loading beat has elapsed, so a
+    /// lagging server read can't resurrect the card. Called only for verdicts
+    /// that fulfill the request (Approve / Request changes); a Comment leaves
+    /// the card and never retires. Deferred until after the beat so a background
+    /// sync during the beat doesn't clear the card early.
+    public mutating func retire(_ id: String) {
+        pending.insert(id)
     }
 
     /// Release the in-flight lock after a submission succeeds. Any optimistic

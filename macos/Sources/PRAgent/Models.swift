@@ -75,6 +75,10 @@ struct ReviewRequest: Identifiable, Equatable {
     var reviewed: Bool
     var draft: ReviewDraft?
     var reviewing: Bool = false
+    /// A verdict is being submitted: the card shows a loading spinner for a
+    /// deliberate beat before it clears optimistically. Transient, driven by
+    /// submitReview; preserved across refreshes in mergeQueue.
+    var submitting: Bool = false
 
     var nameWithNumber: String { "\(owner)/\(repo) #\(number)" }
 }

@@ -86,6 +86,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let m = Snapshot.mockModel()
         m.demoMode = true
         m.demoFails = ProcessInfo.processInfo.environment["PECK_DEMO_FAIL"] != nil
+        // PECK_DEMO_LOADING=1: freeze the first card in its submitting state so the
+        // whole-card loading treatment can be inspected/captured without racing the
+        // ~700ms beat.
+        if ProcessInfo.processInfo.environment["PECK_DEMO_LOADING"] != nil, !m.reviewQueue.isEmpty {
+            m.reviewQueue[0].submitting = true
+        }
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 384, height: 560),
             styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)

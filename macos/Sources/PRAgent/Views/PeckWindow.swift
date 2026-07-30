@@ -484,7 +484,12 @@ struct ReviewListRow: View {
                     Spacer()
                 }
                 .font(.system(size: 10)).foregroundStyle(GH.muted)
-                if req.reviewing {
+                if req.submitting {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(tr("Submitting…")).font(.system(size: 10)).foregroundStyle(GH.muted)
+                    }
+                } else if req.reviewing {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
                         Text(tr("Peck is reviewing…")).font(.system(size: 10)).foregroundStyle(GH.muted)
@@ -502,6 +507,10 @@ struct ReviewListRow: View {
             .background(GH.subtle, in: RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9)
                 .strokeBorder(isSelected ? GH.accent : .clear, lineWidth: 1.5))
+            // Dim the whole row while its verdict is submitting, matching the
+            // detail card's whole-card loading treatment.
+            .opacity(req.submitting ? 0.6 : 1)
+            .animation(.easeInOut(duration: 0.2), value: req.submitting)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
