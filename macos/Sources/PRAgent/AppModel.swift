@@ -536,8 +536,10 @@ final class AppModel: ObservableObject {
                         // Latch the posted head so the loop won't re-post at this
                         // commit even after the post bumps updatedAt / a COMMENT
                         // leaves reviewed == false. Only after a *successful* post,
-                        // so a failed post is retried on a later sync.
-                        if let oid = reviewQueue[i].headOid { autoSubmittedHeads[id] = oid }
+                        // so a failed post is retried on a later sync. A missing
+                        // oid still latches (unknownHead) so it can't re-open the
+                        // loop — it just won't re-arm until a known head lands.
+                        autoSubmittedHeads[id] = reviewQueue[i].headOid ?? ReviewLogic.unknownHead
                         persistAutoReviewStore()
                     }
                     optimistic.finish(id)

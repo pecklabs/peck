@@ -111,6 +111,30 @@ final class AutoReviewLatchTests: XCTestCase {
             latchedHead: "old111", currentHead: head))
     }
 
+    // Missing current oid on an already-latched PR must NOT re-open the loop —
+    // an unknown head can't prove the head advanced, so stay put. (Regression
+    // for the bug the review flagged: a nil headOid re-triggering re-posts.)
+    func testUnknownCurrentHeadOnLatchedPRIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: head, currentHead: nil))
+    }
+
+    // Latched at an unknown head (post succeeded but oid was missing), still
+    // unknown → skip; nothing proves the head moved.
+    func testLatchedUnknownAndStillUnknownIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: ReviewLogic.unknownHead, currentHead: nil))
+    }
+
+    // Latched at an unknown head, but a known head now lands → re-arm review.
+    func testLatchedUnknownThenKnownHeadReArms() {
+        XCTAssertTrue(ReviewLogic.shouldAutoReview(
+            reviewed: false, isDraft: false, hasDraft: false, reviewing: false,
+            latchedHead: ReviewLogic.unknownHead, currentHead: head))
+    }
+
     // Server already reports the PR reviewed → skip regardless of the latch.
     func testReviewedPRIsSkipped() {
         XCTAssertFalse(ReviewLogic.shouldAutoReview(
