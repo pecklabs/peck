@@ -4,7 +4,7 @@ import ReviewLogic
 func timeAgo(_ date: Date) -> String {
     let s = Int(Date().timeIntervalSince(date))
     if I18n.isKorean {
-        if s < 60 { return "방금" }
+        if s < 60 { return "방금 전" }
         if s < 3600 { return "\(s / 60)분 전" }
         if s < 86400 { return "\(s / 3600)시간 전" }
         return "\(s / 86400)일 전"
