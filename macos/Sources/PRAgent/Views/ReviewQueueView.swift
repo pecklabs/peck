@@ -31,6 +31,29 @@ struct ReviewQueueView: View {
     }
 }
 
+/// The floating "Submitting…" indicator shown over a card during its optimistic
+/// loading beat. Uses the system Liquid Glass material on macOS 26+, falling back
+/// to a translucent capsule on older systems (deployment target is macOS 14).
+struct SubmittingPill: View {
+    var body: some View {
+        let content = HStack(spacing: 7) {
+            ProgressView().controlSize(.small)
+            Text(tr("Submitting…"))
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(GH.fg)
+        }
+        .padding(.horizontal, 13).padding(.vertical, 8)
+
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: .capsule)
+        } else {
+            content
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(.white.opacity(0.3), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.12), radius: 6, y: 1)
+        }
+    }
+}
+
 /// A TextEditor that grows with its content and never scrolls internally, so it
 /// can't chain/propagate scroll to the enclosing list.
 struct AutoTextEditor: View {
@@ -65,7 +88,6 @@ struct ReviewCard: View {
     @EnvironmentObject var model: AppModel
     var req: ReviewRequest
     @State private var editedBody: String
-    @State private var submitting = false
 
     init(req: ReviewRequest) {
         self.req = req
@@ -132,6 +154,19 @@ struct ReviewCard: View {
         }
         .padding(12)
         .background(GH.subtle, in: RoundedRectangle(cornerRadius: 10))
+        // Whole-card loading: while a verdict is submitting, the card dims
+        // slightly (still fully readable, just receding) so a floating Liquid
+        // Glass "Submitting…" pill on top stands out — the deliberate beat reads
+        // as "this card is being submitted" before it animates away. Disabled so
+        // nothing underneath is clickable.
+        .opacity(req.submitting ? 0.6 : 1)
+        .overlay {
+            if req.submitting {
+                SubmittingPill().transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+        }
+        .disabled(req.submitting)
+        .animation(.easeInOut(duration: 0.2), value: req.submitting)
     }
 
     @ViewBuilder private func draftView(_ draft: ReviewDraft) -> some View {
@@ -176,24 +211,21 @@ struct ReviewCard: View {
                 submitButton(tr("Approve"), .approve, GH.success)
                 submitButton(tr("Request changes"), .requestChanges, GH.danger)
                 submitButton(tr("Comment"), .comment, GH.accent)
-                if submitting { ProgressView().controlSize(.small) }
             }
         }
     }
 
     private func submitButton(_ title: String, _ verdict: Verdict, _ color: Color) -> some View {
         Button {
-            submitting = true
             Task {
                 await model.submitReview(id: req.id, verdict: verdict,
                                          body: editedBody, comments: req.draft?.comments ?? [])
-                submitting = false
             }
         } label: {
             Text(title).font(.system(size: 10, weight: .semibold))
         }
         .controlSize(.small)
         .tint(color)
-        .disabled(submitting)
+        .disabled(req.submitting)
     }
 }

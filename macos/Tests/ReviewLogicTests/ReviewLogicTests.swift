@@ -86,34 +86,38 @@ final class ReviewLogicTests: XCTestCase {
 final class OptimisticReviewsTests: XCTestCase {
     let pr = "acme/web#137"
 
-    // Happy path: an Approve / Request changes submit is accepted and marks the
-    // PR pending (card cleared optimistically).
-    func testTerminalVerdictMarksPending() {
+    // Happy path: an Approve / Request changes retires the card once its beat
+    // elapses, marking the PR pending (card cleared optimistically).
+    func testRetireMarksPending() {
         var o = OptimisticReviews()
-        XCTAssertTrue(o.begin(pr, retiresCard: true))
+        XCTAssertTrue(o.begin(pr))
+        XCTAssertFalse(o.pending.contains(pr)) // not until the beat elapses
+        o.retire(pr)
         XCTAssertTrue(o.pending.contains(pr))
+    }
+
+    // The loading beat: begin takes the lock but leaves the card visible, so a
+    // sync landing mid-beat reconciles from the server flag (card stays).
+    func testBeginAloneKeepsCardVisibleDuringBeat() {
+        var o = OptimisticReviews()
+        o.begin(pr)
+        XCTAssertFalse(o.pending.contains(pr))
+        XCTAssertFalse(o.reconcile(id: pr, serverReviewed: false)) // card stays
     }
 
     // Double-click: a second submit while one is in flight is dropped.
     func testBeginDropsDuplicateSubmission() {
         var o = OptimisticReviews()
-        XCTAssertTrue(o.begin(pr, retiresCard: true))
-        XCTAssertFalse(o.begin(pr, retiresCard: true))
-    }
-
-    // Comment double-click is dropped too, even though it doesn't retire the card.
-    func testCommentDropsDuplicateSubmission() {
-        var o = OptimisticReviews()
-        XCTAssertTrue(o.begin(pr, retiresCard: false))
-        XCTAssertFalse(o.begin(pr, retiresCard: false))
+        XCTAssertTrue(o.begin(pr))
+        XCTAssertFalse(o.begin(pr))
     }
 
     // A Comment review does NOT retire the card: GitHub keeps you a requested
     // reviewer (server stays reviewed == false), so reconcile must pass that
-    // through and the card must stay visible.
+    // through and the card must stay visible. Comment never calls retire.
     func testCommentKeepsCardVisible() {
         var o = OptimisticReviews()
-        o.begin(pr, retiresCard: false)
+        o.begin(pr)
         XCTAssertFalse(o.pending.contains(pr))
         XCTAssertFalse(o.reconcile(id: pr, serverReviewed: false)) // card stays
     }
@@ -122,28 +126,32 @@ final class OptimisticReviewsTests: XCTestCase {
     // Approve after commenting) is allowed while any pending mark survives.
     func testFinishReleasesLockButKeepsPending() {
         var o = OptimisticReviews()
-        o.begin(pr, retiresCard: true)
+        o.begin(pr)
+        o.retire(pr)
         o.finish(pr)
         XCTAssertFalse(o.inFlight.contains(pr))
-        XCTAssertTrue(o.pending.contains(pr))          // still awaiting confirmation
-        XCTAssertTrue(o.begin(pr, retiresCard: true))  // re-submit allowed
+        XCTAssertTrue(o.pending.contains(pr)) // still awaiting confirmation
+        XCTAssertTrue(o.begin(pr))            // re-submit allowed
     }
 
     // Failure → rollback: after rollback the server flag passes through, so the
     // card reappears (reconcile returns the fetched value, not a forced true).
     func testRollbackRestoresServerFlag() {
         var o = OptimisticReviews()
-        o.begin(pr, retiresCard: true)
+        o.begin(pr)
+        o.retire(pr)
         o.rollback(pr)
         XCTAssertFalse(o.inFlight.contains(pr))
         XCTAssertFalse(o.reconcile(id: pr, serverReviewed: false))
     }
 
-    // The timing window: a fetch that lands before the review propagates still
-    // reports reviewed == false, but the pending mark keeps the card cleared.
+    // The timing window: a fetch that lands after the beat (card retired) but
+    // before the review propagates still reports reviewed == false; the pending
+    // mark keeps the card cleared.
     func testLaggingServerReadKeepsCardCleared() {
         var o = OptimisticReviews()
-        o.begin(pr, retiresCard: true)
+        o.begin(pr)
+        o.retire(pr)
         XCTAssertTrue(o.reconcile(id: pr, serverReviewed: false))
         XCTAssertTrue(o.pending.contains(pr)) // still awaiting confirmation
     }
@@ -152,7 +160,8 @@ final class OptimisticReviewsTests: XCTestCase {
     // is then honored, so a re-requested review reopens the card.
     func testConfirmationClearsPendingThenReRequestReopens() {
         var o = OptimisticReviews()
-        o.begin(pr, retiresCard: true)
+        o.begin(pr)
+        o.retire(pr)
         XCTAssertTrue(o.reconcile(id: pr, serverReviewed: true)) // server confirms
         XCTAssertFalse(o.pending.contains(pr))
         XCTAssertFalse(o.reconcile(id: pr, serverReviewed: false)) // re-request honored
@@ -162,7 +171,8 @@ final class OptimisticReviewsTests: XCTestCase {
     // so the sets can't leak and a later return is server-driven again.
     func testRetainForgetsDroppedPR() {
         var o = OptimisticReviews()
-        o.begin(pr, retiresCard: true)
+        o.begin(pr)
+        o.retire(pr)
         o.retain(ids: ["acme/api#92"]) // pr no longer in the queue
         XCTAssertFalse(o.pending.contains(pr))
         XCTAssertFalse(o.inFlight.contains(pr))

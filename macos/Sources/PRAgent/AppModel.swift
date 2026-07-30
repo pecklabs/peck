@@ -349,6 +349,11 @@ final class AppModel: ObservableObject {
                 r.draft = old.draft
                 r.reviewing = old.reviewing
             }
+            // submitting is a local in-flight flag, not server content, so keep it
+            // regardless of updatedAt: a sync landing mid-beat (even one that also
+            // brings new PR activity) must not flicker the spinner off. submitReview
+            // clears it when the beat ends (or on rollback).
+            if let old = prev[r.id], old.submitting { r.submitting = true }
             // Keep an optimistically-submitted PR reviewed until the server
             // confirms it, so a fetch landing before the review propagates
             // doesn't resurrect the card. Confirmation clears the pending mark.
@@ -535,23 +540,41 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// A deliberate beat between hitting a verdict and the card leaving. An
+    /// instant clear read as a flicker — too fast to register as "submitted" —
+    /// so the card holds a spinner for this long, then animates out. The real
+    /// submit + sync still run afterwards in the background; the card never waits
+    /// on the network round trip (that's the optimistic part).
+    private let submitBeat: UInt64 = 700_000_000
+
     func submitReview(id: String, verdict: Verdict, body: String, comments: [InlineComment]) async {
         guard let idx = reviewQueue.firstIndex(where: { $0.id == id }) else { return }
         // A Comment review doesn't fulfill the request — GitHub keeps you a
         // requested reviewer and the server stays reviewed == false — so the card
-        // must remain. Only Approve / Request changes retire the card, and only
-        // those clear it optimistically; both still take the in-flight dedup lock.
+        // must remain. Only Approve / Request changes retire the card.
         let retires = verdict != .comment
         // Drop duplicate submissions (double-clicks, or a click that slips through
         // before the button's disabled state renders).
-        guard optimistic.begin(id, retiresCard: retires) else { return }
-        // Clear the card immediately instead of waiting on the submit + sync round
-        // trip. The pending mark stays until a sync confirms it (see mergeQueue),
-        // so a lagging read can't resurrect it.
-        if retires { reviewQueue[idx].reviewed = true }
+        guard optimistic.begin(id) else { return }
+        // Show the loading spinner and hold the card for a deliberate beat. No
+        // pending mark yet, so a background sync landing during the beat can't
+        // clear the card early — it stays put, spinner and all.
+        reviewQueue[idx].submitting = true
         let pr = reviewQueue[idx]
+
+        try? await Task.sleep(nanoseconds: submitBeat)
+
+        // Beat elapsed: drop the spinner and, for a fulfilling verdict, clear the
+        // card optimistically. retire() marks it pending only now, so mergeQueue
+        // holds it reviewed until the server confirms and a lagging read can't
+        // resurrect it.
+        if let i = reviewQueue.firstIndex(where: { $0.id == id }) {
+            reviewQueue[i].submitting = false
+            if retires { reviewQueue[i].reviewed = true }
+        }
+        if retires { optimistic.retire(id) }
+
         if demoMode {
-            try? await Task.sleep(nanoseconds: 450_000_000) // fake latency
             if demoFails {
                 rollbackReview(id: id, retires: retires, message: "Demo: submission failed")
             } else {
@@ -569,11 +592,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Undo a failed optimistic submission: release the locks, restore the card
-    /// (only verdicts that retired it flipped `reviewed`), and surface the error.
+    /// Undo a failed optimistic submission: release the locks, drop the spinner,
+    /// restore the card (only verdicts that retired it flipped `reviewed`), and
+    /// surface the error.
     private func rollbackReview(id: String, retires: Bool, message: String) {
         optimistic.rollback(id)
-        if retires, let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = false }
+        if let i = reviewQueue.firstIndex(where: { $0.id == id }) {
+            reviewQueue[i].submitting = false
+            if retires { reviewQueue[i].reviewed = false }
+        }
         errorMessage = message
     }
 }

@@ -55,6 +55,7 @@ enum I18n {
             "누군가 리뷰를 요청하면, 에이전트가 설명과 평결 초안을 여기에 만들어요.",
         "Let Peck review": "Peck에게 리뷰 맡기기",
         "Peck is reviewing…": "Peck이 리뷰 중…",
+        "Submitting…": "제출 중…",
         "Review body": "리뷰 본문",
         "Open on GitHub": "GitHub에서 열기",
         "Retry": "다시 시도",
