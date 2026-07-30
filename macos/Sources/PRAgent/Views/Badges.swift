@@ -1,4 +1,5 @@
 import SwiftUI
+import ReviewLogic
 
 func timeAgo(_ date: Date) -> String {
     let s = Int(Date().timeIntervalSince(date))
@@ -197,5 +198,24 @@ enum Open {
     static func url(_ s: String) {
         guard let u = URL(string: s) else { return }
         NSWorkspace.shared.open(u)
+    }
+}
+
+/// Plain-text rendering of a self-review, for copy-to-clipboard. Mirrors what
+/// `reviewExplanation` shows on screen (verdict, summary, fix list) but as a
+/// string you can paste into a PR description or a message. The pure formatting
+/// lives in `ReviewLogic.reviewPlainText`; this wrapper supplies localization.
+func selfReviewPlainText(_ draft: ReviewDraft) -> String {
+    reviewPlainText(
+        title: "\(tr("Self-review")) · \(draft.verdict.label)",
+        summary: draft.summary,
+        risks: draft.risks,
+        fixesHeader: tr("Things to fix before requesting review"))
+}
+
+enum Clipboard {
+    static func copy(_ s: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(s, forType: .string)
     }
 }

@@ -176,4 +176,34 @@ final class OptimisticReviewsTests: XCTestCase {
         XCTAssertFalse(o.reconcile(id: pr, serverReviewed: false))
         XCTAssertTrue(o.reconcile(id: pr, serverReviewed: true))
     }
+
+    // With no risks, the copy text is just the title and summary — no fixes
+    // header and no trailing bullets.
+    func testReviewPlainTextWithoutRisks() {
+        let out = reviewPlainText(
+            title: "Self-review · Approve",
+            summary: "Looks good.",
+            risks: [],
+            fixesHeader: "Things to fix before requesting review")
+        XCTAssertEqual(out, "Self-review · Approve\n\nLooks good.")
+    }
+
+    // With risks, the fixes header and one bullet per risk are appended below
+    // the summary.
+    func testReviewPlainTextWithRisks() {
+        let out = reviewPlainText(
+            title: "Self-review · Request changes",
+            summary: "Small fix.",
+            risks: ["No test for the null path", "Leftover debug print"],
+            fixesHeader: "Things to fix before requesting review")
+        XCTAssertEqual(out, """
+        Self-review · Request changes
+
+        Small fix.
+
+        Things to fix before requesting review:
+        • No test for the null path
+        • Leftover debug print
+        """)
+    }
 }

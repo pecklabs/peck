@@ -159,6 +159,8 @@ struct SelfReviewSection: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.peckWindowMode) private var windowMode
     @Environment(\.dismiss) private var dismissPopover
+    @State private var copied = false
+    @State private var copyGeneration = 0
     var pr: MyPullRequest
 
     var body: some View {
@@ -218,6 +220,24 @@ struct SelfReviewSection: View {
                             .font(.system(size: 9)).foregroundStyle(GH.muted)
                     }
                     if !Snapshot.isRendering {
+                        Button {
+                            Clipboard.copy(selfReviewPlainText(draft))
+                            copied = true
+                            copyGeneration += 1
+                            let gen = copyGeneration
+                            Task {
+                                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                                // Only the most recent click resets, so a rapid
+                                // second click can't be cut short by the first
+                                // click's timer firing.
+                                if gen == copyGeneration { copied = false }
+                            }
+                        } label: {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                .foregroundStyle(copied ? GH.success : GH.muted)
+                        }
+                        .buttonStyle(.borderless).controlSize(.small)
+                        .help(tr("Copy self-review"))
                         Button {
                             Task { await model.runSelfReview(id: pr.id) }
                         } label: {
