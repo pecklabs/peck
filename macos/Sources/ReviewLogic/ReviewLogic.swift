@@ -32,3 +32,73 @@ public enum ReviewLogic {
         }
     }
 }
+
+/// Optimistic-submission bookkeeping for the review queue, kept pure so the
+/// queue-reconciliation rules can be unit-tested without the GitHub API.
+///
+/// Two concerns are tracked separately:
+///   • `inFlight` — any submission in progress, so a double-click is dropped.
+///   • `pending`  — PRs shown reviewed optimistically, awaiting server
+///                  confirmation. Only verdicts that *retire* the card
+///                  (Approve / Request changes) go here. A Comment review does
+///                  NOT retire the card: GitHub keeps you a requested reviewer
+///                  and the server stays `reviewed == false`, so forcing it
+///                  would hide a PR you still owe a verdict on.
+///
+/// The rules ensure that a lagging server read can't resurrect a retired card
+/// mid-submit, yet a genuine re-request (reviewed goes false *after* the server
+/// confirmed the review) is still honored.
+public struct OptimisticReviews {
+    /// Ids with a submission in flight — drives double-click dedup.
+    public private(set) var inFlight: Set<String> = []
+    /// Ids shown reviewed optimistically until a server fetch confirms them.
+    public private(set) var pending: Set<String> = []
+    public init() {}
+
+    /// Register an in-flight submission. Returns false when one is already in
+    /// flight for this id — the caller should drop the duplicate.
+    ///
+    /// - Parameter retiresCard: true for verdicts that fulfill the review
+    ///   request (Approve / Request changes), which clear the card
+    ///   optimistically; false for a Comment review, which leaves it.
+    @discardableResult
+    public mutating func begin(_ id: String, retiresCard: Bool) -> Bool {
+        guard inFlight.insert(id).inserted else { return false }
+        if retiresCard { pending.insert(id) }
+        return true
+    }
+
+    /// Release the in-flight lock after a submission succeeds. Any optimistic
+    /// `pending` mark stays until a server fetch confirms it, so a later
+    /// submission for the same PR (e.g. a re-request) is allowed again.
+    public mutating func finish(_ id: String) {
+        inFlight.remove(id)
+    }
+
+    /// Undo a submission that failed; the card reappears and re-submit is allowed.
+    public mutating func rollback(_ id: String) {
+        inFlight.remove(id)
+        pending.remove(id)
+    }
+
+    /// Reconcile a freshly fetched `reviewed` flag for one PR.
+    ///
+    /// While a submission is pending we force `true` so a stale read can't
+    /// resurrect the card. The moment the server confirms `reviewed == true`
+    /// we drop the pending mark, so a later re-request (which fetches as
+    /// `false`) is passed through unchanged. PRs that were never optimistically
+    /// retired (Comment reviews, untracked PRs) always pass through as-is.
+    public mutating func reconcile(id: String, serverReviewed: Bool) -> Bool {
+        guard pending.contains(id) else { return serverReviewed }
+        if serverReviewed { pending.remove(id) } // confirmed by the server
+        return true
+    }
+
+    /// Drop marks for ids no longer present in the fetched queue (merged /
+    /// closed / fulfilled) so the sets can't grow unbounded and a PR that later
+    /// returns is reconciled from the server's flag again.
+    public mutating func retain(ids: Set<String>) {
+        pending.formIntersection(ids)
+        inFlight.formIntersection(ids)
+    }
+}

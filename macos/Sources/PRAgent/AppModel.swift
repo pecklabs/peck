@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import ReviewLogic
 #if canImport(Sparkle)
 import Sparkle
 #endif
@@ -40,6 +41,20 @@ final class AppModel: ObservableObject {
         return false
         #endif
     }
+
+    /// Demo/preview runs (PECK_DEMO=1): submitReview keeps the optimistic removal
+    /// but skips the GitHub call + sync, so the card-dismissal animation can be
+    /// seen against mock data without touching a real repo. Inert in normal use.
+    var demoMode = false
+    /// PECK_DEMO_FAIL=1: make demo submissions fail, to exercise the rollback +
+    /// error path (card restored, errorMessage shown) without a real repo.
+    var demoFails = false
+
+    /// Optimistic review submissions: a PR is marked reviewed the instant its
+    /// verdict is submitted (the card clears at once) and held here until a
+    /// server fetch confirms it, so a lagging read can't resurrect the card and
+    /// a double-click can't fire a second submission. See ReviewLogic tests.
+    private var optimistic = OptimisticReviews()
 
     // Notification dedup.
     private var notifiedReviews: Set<String> = []
@@ -311,8 +326,14 @@ final class AppModel: ObservableObject {
                 r.draft = old.draft
                 r.reviewing = old.reviewing
             }
+            // Keep an optimistically-submitted PR reviewed until the server
+            // confirms it, so a fetch landing before the review propagates
+            // doesn't resurrect the card. Confirmation clears the pending mark.
+            r.reviewed = optimistic.reconcile(id: r.id, serverReviewed: r.reviewed)
             return r
         }
+        // Forget pending marks for PRs that dropped out of the queue entirely.
+        optimistic.retain(ids: Set(incoming.map(\.id)))
     }
 
     /// Preserve self-review results across refreshes (and restore persisted ones
@@ -492,14 +513,44 @@ final class AppModel: ObservableObject {
     }
 
     func submitReview(id: String, verdict: Verdict, body: String, comments: [InlineComment]) async {
-        guard let pr = reviewQueue.first(where: { $0.id == id }) else { return }
+        guard let idx = reviewQueue.firstIndex(where: { $0.id == id }) else { return }
+        // A Comment review doesn't fulfill the request — GitHub keeps you a
+        // requested reviewer and the server stays reviewed == false — so the card
+        // must remain. Only Approve / Request changes retire the card, and only
+        // those clear it optimistically; both still take the in-flight dedup lock.
+        let retires = verdict != .comment
+        // Drop duplicate submissions (double-clicks, or a click that slips through
+        // before the button's disabled state renders).
+        guard optimistic.begin(id, retiresCard: retires) else { return }
+        // Clear the card immediately instead of waiting on the submit + sync round
+        // trip. The pending mark stays until a sync confirms it (see mergeQueue),
+        // so a lagging read can't resurrect it.
+        if retires { reviewQueue[idx].reviewed = true }
+        let pr = reviewQueue[idx]
+        if demoMode {
+            try? await Task.sleep(nanoseconds: 450_000_000) // fake latency
+            if demoFails {
+                rollbackReview(id: id, retires: retires, message: "Demo: submission failed")
+            } else {
+                optimistic.finish(id) // no server in demo — release the lock like a success
+            }
+            return
+        }
         do {
             try await github.submitReview(owner: pr.owner, repo: pr.repo, number: pr.number,
                                           verdict: verdict, body: body, comments: comments)
-            if let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = true }
             await sync()
+            optimistic.finish(id)
         } catch {
-            errorMessage = error.localizedDescription
+            rollbackReview(id: id, retires: retires, message: error.localizedDescription)
         }
+    }
+
+    /// Undo a failed optimistic submission: release the locks, restore the card
+    /// (only verdicts that retired it flipped `reviewed`), and surface the error.
+    private func rollbackReview(id: String, retires: Bool, message: String) {
+        optimistic.rollback(id)
+        if retires, let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = false }
+        errorMessage = message
     }
 }
