@@ -46,6 +46,9 @@ final class AppModel: ObservableObject {
     /// but skips the GitHub call + sync, so the card-dismissal animation can be
     /// seen against mock data without touching a real repo. Inert in normal use.
     var demoMode = false
+    /// PECK_DEMO_FAIL=1: make demo submissions fail, to exercise the rollback +
+    /// error path (card restored, errorMessage shown) without a real repo.
+    var demoFails = false
 
     /// Optimistic review submissions: a PR is marked reviewed the instant its
     /// verdict is submitted (the card clears at once) and held here until a
@@ -525,7 +528,12 @@ final class AppModel: ObservableObject {
         if retires { reviewQueue[idx].reviewed = true }
         let pr = reviewQueue[idx]
         if demoMode {
-            try? await Task.sleep(nanoseconds: 450_000_000) // fake latency; keep the removal
+            try? await Task.sleep(nanoseconds: 450_000_000) // fake latency
+            if demoFails {
+                rollbackReview(id: id, retires: retires, message: "Demo: submission failed")
+            } else {
+                optimistic.finish(id) // no server in demo — release the lock like a success
+            }
             return
         }
         do {
@@ -534,10 +542,15 @@ final class AppModel: ObservableObject {
             await sync()
             optimistic.finish(id)
         } catch {
-            // Roll back the optimistic update so the reviewer can retry.
-            optimistic.rollback(id)
-            if retires, let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = false }
-            errorMessage = error.localizedDescription
+            rollbackReview(id: id, retires: retires, message: error.localizedDescription)
         }
+    }
+
+    /// Undo a failed optimistic submission: release the locks, restore the card
+    /// (only verdicts that retired it flipped `reviewed`), and surface the error.
+    private func rollbackReview(id: String, retires: Bool, message: String) {
+        optimistic.rollback(id)
+        if retires, let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = false }
+        errorMessage = message
     }
 }

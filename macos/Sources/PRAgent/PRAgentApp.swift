@@ -3,6 +3,26 @@ import AppKit
 import UserNotifications
 import Combine
 
+/// Demo-only host (PECK_DEMO=1): the Reviews list plus an error banner, so the
+/// optimistic rollback path (card restored + errorMessage) is visible — the
+/// shipped list view surfaces errorMessage elsewhere (Settings / Onboarding).
+private struct DemoReviewsRoot: View {
+    @EnvironmentObject var model: AppModel
+    var body: some View {
+        VStack(spacing: 0) {
+            if let err = model.errorMessage {
+                Text(err)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(GH.danger)
+            }
+            ReviewQueueView()
+        }
+    }
+}
+
 @main
 struct PRAgentApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -65,13 +85,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSApp.setActivationPolicy(.regular)
         let m = Snapshot.mockModel()
         m.demoMode = true
+        m.demoFails = ProcessInfo.processInfo.environment["PECK_DEMO_FAIL"] != nil
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 384, height: 560),
             styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         win.title = "Peck — demo (Reviews)"
         win.isReleasedWhenClosed = false
         win.contentView = NSHostingView(rootView:
-            ReviewQueueView()
+            DemoReviewsRoot()
                 .environmentObject(m)
                 .frame(width: 384, height: 560)
                 .background(GH.canvas)
