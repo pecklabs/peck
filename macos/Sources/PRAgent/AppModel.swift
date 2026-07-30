@@ -612,7 +612,10 @@ final class AppModel: ObservableObject {
     /// so the card holds a spinner for this long, then animates out. The real
     /// submit + sync still run afterwards in the background; the card never waits
     /// on the network round trip (that's the optimistic part).
-    private let submitBeat: UInt64 = 700_000_000
+    ///
+    /// Randomized per submission so the hold doesn't feel mechanically uniform;
+    /// each verdict picks a fresh duration within this range.
+    private let submitBeatRange: ClosedRange<UInt64> = 400_000_000...800_000_000
 
     func submitReview(id: String, verdict: Verdict, body: String, comments: [InlineComment]) async {
         guard let idx = reviewQueue.firstIndex(where: { $0.id == id }) else { return }
@@ -629,7 +632,7 @@ final class AppModel: ObservableObject {
         reviewQueue[idx].submitting = true
         let pr = reviewQueue[idx]
 
-        try? await Task.sleep(nanoseconds: submitBeat)
+        try? await Task.sleep(nanoseconds: UInt64.random(in: submitBeatRange))
 
         // Beat elapsed: drop the spinner and, for a fulfilling verdict, clear the
         // card optimistically. retire() marks it pending only now, so mergeQueue
