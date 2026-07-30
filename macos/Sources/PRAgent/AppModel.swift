@@ -83,10 +83,20 @@ final class AppModel: ObservableObject {
     /// GitHub login the persisted self-review store belongs to.
     private var selfReviewOwner: String?
 
+    /// PR id → head commit oid we last AUTO-submitted a review at. Persisted so a
+    /// relaunch doesn't re-post, and keyed by head so a new commit re-arms review.
+    /// Guards the auto-review loop against re-firing after its own post bumps
+    /// `updatedAt` (and, for COMMENT verdicts, never clears server `reviewed`).
+    private var autoSubmittedHeads: [String: String] = [:]
+    /// GitHub login the auto-submit latch belongs to.
+    private var autoSubmitOwner: String?
+
     private let settingsKey = "settings"
     private let selfReviewSeenKey = "selfReviewSeen"
     private let selfReviewDraftsKey = "selfReviewDrafts"
     private let selfReviewOwnerKey = "selfReviewOwner"
+    private let autoSubmittedHeadsKey = "autoSubmittedHeads"
+    private let autoSubmitOwnerKey = "autoSubmitOwner"
 
     init() {
         loadSettings()
@@ -94,6 +104,7 @@ final class AppModel: ObservableObject {
         skills = Skills.info()
         hasAnthropicKey = Keychain.has(.anthropicKey)
         loadSelfReviewStore()
+        loadAutoReviewStore()
     }
 
     private func loadSelfReviewStore() {
@@ -116,6 +127,21 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(data, forKey: selfReviewDraftsKey)
         }
         UserDefaults.standard.set(selfReviewOwner, forKey: selfReviewOwnerKey)
+    }
+
+    private func loadAutoReviewStore() {
+        if let data = UserDefaults.standard.data(forKey: autoSubmittedHeadsKey),
+           let heads = try? JSONDecoder().decode([String: String].self, from: data) {
+            autoSubmittedHeads = heads
+        }
+        autoSubmitOwner = UserDefaults.standard.string(forKey: autoSubmitOwnerKey)
+    }
+
+    private func persistAutoReviewStore() {
+        if let data = try? JSONEncoder().encode(autoSubmittedHeads) {
+            UserDefaults.standard.set(data, forKey: autoSubmittedHeadsKey)
+        }
+        UserDefaults.standard.set(autoSubmitOwner, forKey: autoSubmitOwnerKey)
     }
 
     func bootstrap() {
@@ -438,9 +464,23 @@ final class AppModel: ObservableObject {
         // Decoupled from the notification dedup so it also runs on launch / after
         // restart. An errored draft is left alone (manual retry) to avoid loops.
         if settings.autoReview {
-            for r in queue where !r.reviewed && !r.isDraft && r.draft == nil && !r.reviewing {
+            // The auto-submit latch belongs to one GitHub account. On a different
+            // login, start over — otherwise a stale latch would suppress reviews
+            // for the new account's PRs.
+            if let login = user?.login, autoSubmitOwner != login {
+                autoSubmitOwner = login
+                autoSubmittedHeads = [:]
+            }
+            for r in queue where ReviewLogic.shouldAutoReview(
+                reviewed: r.reviewed, isDraft: r.isDraft, hasDraft: r.draft != nil,
+                reviewing: r.reviewing, latchedHead: autoSubmittedHeads[r.id], currentHead: r.headOid) {
                 Task { await self.runReview(id: r.id) }
             }
+            // Keep the latch bounded: drop entries for PRs that left the queue.
+            // Never on an empty queue (see prunedLatch).
+            autoSubmittedHeads = ReviewLogic.prunedLatch(
+                autoSubmittedHeads, keepingIds: Set(queue.map(\.id)))
+            persistAutoReviewStore()
         }
 
         for p in myPrs {
@@ -481,9 +521,30 @@ final class AppModel: ObservableObject {
                               subtitle: pr.nameWithNumber)
             }
             if settings.autoSubmit {
-                try await github.submitReview(owner: pr.owner, repo: pr.repo, number: pr.number,
-                                              verdict: draft.verdict, body: draft.body, comments: draft.comments)
-                if let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = true }
+                // In-flight lock so an overlapping sync can't fire a second POST.
+                // If a new commit lands mid-run, mergeQueue wipes the `reviewing`
+                // guard; this lock (which mergeQueue can't touch) still holds.
+                // A manual submit in flight for the same PR also takes it, so the
+                // two never double-post. Dropped runs leave state intact (the
+                // draft is already set above); the holder posts.
+                guard optimistic.begin(id) else { return }
+                do {
+                    try await github.submitReview(owner: pr.owner, repo: pr.repo, number: pr.number,
+                                                  verdict: draft.verdict, body: draft.body, comments: draft.comments)
+                    if let i = reviewQueue.firstIndex(where: { $0.id == id }) {
+                        reviewQueue[i].reviewed = true
+                        // Latch the posted head so the loop won't re-post at this
+                        // commit even after the post bumps updatedAt / a COMMENT
+                        // leaves reviewed == false. Only after a *successful* post,
+                        // so a failed post is retried on a later sync.
+                        if let oid = reviewQueue[i].headOid { autoSubmittedHeads[id] = oid }
+                        persistAutoReviewStore()
+                    }
+                    optimistic.finish(id)
+                } catch {
+                    optimistic.rollback(id)
+                    throw error
+                }
             }
         } catch {
             if let i = reviewQueue.firstIndex(where: { $0.id == id }) {

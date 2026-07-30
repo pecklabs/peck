@@ -266,6 +266,7 @@ final class GitHubClient {
                 changedFiles: node["changedFiles"] as? Int ?? 0,
                 createdAt: date(node["createdAt"]),
                 updatedAt: date(node["updatedAt"]),
+                headOid: headOid,
                 reviewed: reviewed
             )
         }

@@ -31,6 +31,38 @@ public enum ReviewLogic {
             return login == viewerLogin && state != "PENDING" && (headOid == nil || oid == headOid)
         }
     }
+
+    /// Whether the auto-review loop should generate + auto-submit a review for a
+    /// pending PR this sync.
+    ///
+    /// Beyond the obvious guards (already reviewed, draft PR, a draft already
+    /// exists, a run in flight) this consults an *auto-submit latch*: the head
+    /// commit we last auto-submitted a review at. It closes a re-post loop —
+    /// submitting a review bumps the PR's `updatedAt`, which makes `mergeQueue`
+    /// drop the local `draft`/`reviewing` guards, and a `COMMENT` verdict never
+    /// clears the server `reviewed` flag; without the latch the loop would re-post
+    /// the same review every sync. Keying the latch by head commit means a real
+    /// new push (head advances) still re-arms review.
+    public static func shouldAutoReview(
+        reviewed: Bool, isDraft: Bool, hasDraft: Bool, reviewing: Bool,
+        latchedHead: String?, currentHead: String?
+    ) -> Bool {
+        guard !reviewed, !isDraft, !hasDraft, !reviewing else { return false }
+        // Already auto-submitted at this exact head commit → don't re-post.
+        if let latched = latchedHead, latched == currentHead { return false }
+        return true
+    }
+
+    /// Prune the auto-submit latch (PR id → head oid) to the PRs still in the
+    /// fetched queue, so it can't grow without bound as PRs merge / close.
+    /// Never prunes on an empty id set — a degenerate but "successful" sync would
+    /// otherwise wipe every latch at once and let the whole queue re-post.
+    public static func prunedLatch(
+        _ latch: [String: String], keepingIds ids: Set<String>
+    ) -> [String: String] {
+        guard !ids.isEmpty else { return latch }
+        return latch.filter { ids.contains($0.key) }
+    }
 }
 
 /// Optimistic-submission bookkeeping for the review queue, kept pure so the
