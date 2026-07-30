@@ -14,10 +14,19 @@ struct ReviewQueueView: View {
                     EmptyState(icon: "eye", title: tr("No reviews requested"),
                                subtitle: tr("When someone requests your review, the agent drafts an explanation and a verdict here."))
                 } else {
-                    ForEach(pending) { req in ReviewCard(req: req) }
+                    ForEach(pending) { req in
+                        ReviewCard(req: req)
+                            .transition(.asymmetric(
+                                insertion: .opacity,
+                                // Fade-led so the card dissolves in place; a gentle
+                                // shrink lets the rows below close the gap smoothly.
+                                removal: .opacity.combined(with: .scale(scale: 0.95))
+                            ))
+                    }
                 }
             }
             .padding(12)
+            .animation(.easeInOut(duration: 0.3), value: pending.map(\.id))
         }
     }
 }

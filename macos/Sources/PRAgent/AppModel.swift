@@ -41,6 +41,16 @@ final class AppModel: ObservableObject {
         #endif
     }
 
+    /// Demo/preview runs (PECK_DEMO=1): submitReview keeps the optimistic removal
+    /// but skips the GitHub call + sync, so the card-dismissal animation can be
+    /// seen against mock data without touching a real repo. Inert in normal use.
+    var demoMode = false
+
+    /// Review ids with a submit request in flight. Marked reviewed optimistically
+    /// so the card clears instantly; kept here so a concurrent poll can't resurrect
+    /// it (see mergeQueue) and a double-click can't fire a second submission.
+    private var submittingReviews: Set<String> = []
+
     // Notification dedup.
     private var notifiedReviews: Set<String> = []
     private var notifiedConflicts: Set<String> = []
@@ -311,6 +321,9 @@ final class AppModel: ObservableObject {
                 r.draft = old.draft
                 r.reviewing = old.reviewing
             }
+            // A submit is still in flight for this PR: keep it optimistically
+            // reviewed so a poll landing mid-submit doesn't resurrect the card.
+            if submittingReviews.contains(r.id) { r.reviewed = true }
             return r
         }
     }
@@ -492,13 +505,27 @@ final class AppModel: ObservableObject {
     }
 
     func submitReview(id: String, verdict: Verdict, body: String, comments: [InlineComment]) async {
-        guard let pr = reviewQueue.first(where: { $0.id == id }) else { return }
+        guard let idx = reviewQueue.firstIndex(where: { $0.id == id }) else { return }
+        // Drop duplicate submissions (double-clicks, or a click that slips through
+        // before the button's disabled state renders).
+        if submittingReviews.contains(id) { return }
+        let pr = reviewQueue[idx]
+        submittingReviews.insert(id)
+        // Optimistically mark reviewed so the card clears immediately instead of
+        // waiting on the submit + sync round trip.
+        reviewQueue[idx].reviewed = true
+        defer { submittingReviews.remove(id) }
+        if demoMode {
+            try? await Task.sleep(nanoseconds: 450_000_000) // fake latency; keep the removal
+            return
+        }
         do {
             try await github.submitReview(owner: pr.owner, repo: pr.repo, number: pr.number,
                                           verdict: verdict, body: body, comments: comments)
-            if let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = true }
             await sync()
         } catch {
+            // Roll back the optimistic update so the reviewer can retry.
+            if let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = false }
             errorMessage = error.localizedDescription
         }
     }

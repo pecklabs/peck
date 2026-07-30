@@ -31,6 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             Snapshot.run(outDir: env["PECK_SNAPSHOT_OUT"] ?? NSTemporaryDirectory())
             return
         }
+        if env["PECK_DEMO"] != nil {
+            runDemo()
+            return
+        }
         NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().delegate = self
         model.bootstrap()
@@ -51,6 +55,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 }
             }
             .store(in: &cancellables)
+    }
+
+    /// Interactive demo (PECK_DEMO=1): hosts the real Reviews UI over mock data in
+    /// a plain window so the optimistic card-dismissal animation can be seen
+    /// without connecting to GitHub. Not part of the shipped app flow.
+    private var demoWindow: NSWindow?
+    private func runDemo() {
+        NSApp.setActivationPolicy(.regular)
+        let m = Snapshot.mockModel()
+        m.demoMode = true
+        let win = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 384, height: 560),
+            styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        win.title = "Peck — demo (Reviews)"
+        win.isReleasedWhenClosed = false
+        win.contentView = NSHostingView(rootView:
+            ReviewQueueView()
+                .environmentObject(m)
+                .frame(width: 384, height: 560)
+                .background(GH.canvas)
+                .foregroundStyle(GH.fg)
+                .tint(GH.accent))
+        win.center()
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        demoWindow = win
     }
 
     /// Clicking the app icon (Dock, Launchpad, Finder) while running opens the

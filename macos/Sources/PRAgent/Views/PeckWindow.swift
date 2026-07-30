@@ -435,10 +435,14 @@ struct ReviewsSplitView: View {
                             ReviewListRow(req: req, isSelected: req.id == selected?.id) {
                                 selection = req.id
                             }
+                            .transition(.asymmetric(
+                                insertion: .opacity,
+                                removal: .opacity.combined(with: .scale(scale: 0.95))))
                         }
                     }
                 }
                 .padding(10)
+                .animation(.easeInOut(duration: 0.3), value: pending.map(\.id))
             }
             .frame(width: 330)
             .frame(maxHeight: .infinity, alignment: .top)
