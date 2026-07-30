@@ -27,6 +27,7 @@ enum I18n {
         "Draft": "초안",
         "Self-review": "셀프 리뷰",
         "Self-review failed": "셀프 리뷰 실패",
+        "Copy self-review": "셀프 리뷰 복사",
         "Peck is self-reviewing…": "Peck이 셀프 리뷰 중…",
         "Things to fix before requesting review": "리뷰 요청 전 확인할 것",
         "Reviewers": "리뷰어",

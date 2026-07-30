@@ -199,3 +199,23 @@ enum Open {
         NSWorkspace.shared.open(u)
     }
 }
+
+/// Plain-text rendering of a self-review, for copy-to-clipboard. Mirrors what
+/// `reviewExplanation` shows on screen (verdict, summary, fix list) but as a
+/// string you can paste into a PR description or a message.
+func selfReviewPlainText(_ draft: ReviewDraft, header: String = tr("Things to fix before requesting review")) -> String {
+    var lines = ["\(tr("Self-review")) · \(draft.verdict.label)", "", draft.summary]
+    if !draft.risks.isEmpty {
+        lines.append("")
+        lines.append("\(header):")
+        for risk in draft.risks { lines.append("• \(risk)") }
+    }
+    return lines.joined(separator: "\n")
+}
+
+enum Clipboard {
+    static func copy(_ s: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(s, forType: .string)
+    }
+}
