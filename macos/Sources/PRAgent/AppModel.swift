@@ -1,9 +1,21 @@
 import Foundation
 import SwiftUI
+import AppKit
 import ReviewLogic
 #if canImport(Sparkle)
 import Sparkle
 #endif
+
+extension ThemeMode {
+    /// The AppKit appearance to force, or nil to follow the macOS setting.
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -108,6 +120,7 @@ final class AppModel: ObservableObject {
 
     func bootstrap() {
         AppPaths.ensure()
+        applyThemeMode()
         Task { await Notifier.requestAuthorization() }
         startUpdaterIfConfigured()
         skills = Skills.info()
@@ -170,8 +183,18 @@ final class AppModel: ObservableObject {
 
     func saveSettings(_ next: AppSettings) {
         let intervalChanged = next.pollIntervalSec != settings.pollIntervalSec
+        let themeChanged = next.themeMode != settings.themeMode
         persist(next)
         if intervalChanged && connected { schedulePolling() }
+        if themeChanged { applyThemeMode() }
+    }
+
+    /// Force the app's appearance from the saved preference. Our GitHub-Primer
+    /// colors are AppKit *dynamic* NSColors that resolve against the current
+    /// `NSApp.appearance`, so setting it here recolors the popover, the window,
+    /// and any other host in one shot. `.system` (nil) hands control back to macOS.
+    func applyThemeMode() {
+        NSApp.appearance = settings.themeMode.nsAppearance
     }
 
     // MARK: Connection

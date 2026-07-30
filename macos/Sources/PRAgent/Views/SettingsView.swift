@@ -106,6 +106,19 @@ struct SettingsView: View {
         }
     }
 
+    private var themePicker: some View {
+        HStack {
+            Text(tr("Appearance")).font(.system(size: 11))
+            Spacer()
+            Picker("", selection: Binding(
+                get: { model.settings.themeMode },
+                set: { var s = model.settings; s.themeMode = $0; model.saveSettings(s) })) {
+                ForEach(ThemeMode.allCases) { Text($0.label).tag($0) }
+            }
+            .labelsHidden().pickerStyle(.menu).fixedSize()
+        }
+    }
+
     private func languagePicker(_ title: String, _ keyPath: WritableKeyPath<AppSettings, String>) -> some View {
         HStack {
             Text(title).font(.system(size: 11))
@@ -189,6 +202,7 @@ struct SettingsView: View {
             }
 
             section(tr("Behavior")) {
+                themePicker
                 languagePicker(tr("App language"), \.uiLanguage)
                 settingRow(I18n.isKorean ? "\(model.settings.pollIntervalSec)\u{cd08}\u{b9c8}\u{b2e4} \u{d655}\u{c778}" : "Poll every \(model.settings.pollIntervalSec)s") {
                     Stepper("", value: Binding(
