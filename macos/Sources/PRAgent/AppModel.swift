@@ -463,14 +463,19 @@ final class AppModel: ObservableObject {
         // Auto-generate a draft for every pending review that doesn't have one yet.
         // Decoupled from the notification dedup so it also runs on launch / after
         // restart. An errored draft is left alone (manual retry) to avoid loops.
+        // The auto-submit latch belongs to one GitHub account. On a different
+        // login, start over — otherwise a stale latch would suppress reviews for
+        // the new account's PRs. Kept OUTSIDE the autoReview gate on purpose: the
+        // latch is written on any auto-submit (including a manual review with
+        // auto-submit on, autoReview off), so its owner must track the account
+        // independently of autoReview.
+        if let login = user?.login, autoSubmitOwner != login {
+            autoSubmitOwner = login
+            autoSubmittedHeads = [:]
+            persistAutoReviewStore()
+        }
+
         if settings.autoReview {
-            // The auto-submit latch belongs to one GitHub account. On a different
-            // login, start over — otherwise a stale latch would suppress reviews
-            // for the new account's PRs.
-            if let login = user?.login, autoSubmitOwner != login {
-                autoSubmitOwner = login
-                autoSubmittedHeads = [:]
-            }
             for r in queue where ReviewLogic.shouldAutoReview(
                 reviewed: r.reviewed, isDraft: r.isDraft, hasDraft: r.draft != nil,
                 reviewing: r.reviewing, latchedHead: autoSubmittedHeads[r.id], currentHead: r.headOid) {
