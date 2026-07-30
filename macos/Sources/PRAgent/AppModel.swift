@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import ReviewLogic
 #if canImport(Sparkle)
 import Sparkle
 #endif
@@ -46,10 +47,11 @@ final class AppModel: ObservableObject {
     /// seen against mock data without touching a real repo. Inert in normal use.
     var demoMode = false
 
-    /// Review ids with a submit request in flight. Marked reviewed optimistically
-    /// so the card clears instantly; kept here so a concurrent poll can't resurrect
-    /// it (see mergeQueue) and a double-click can't fire a second submission.
-    private var submittingReviews: Set<String> = []
+    /// Optimistic review submissions: a PR is marked reviewed the instant its
+    /// verdict is submitted (the card clears at once) and held here until a
+    /// server fetch confirms it, so a lagging read can't resurrect the card and
+    /// a double-click can't fire a second submission. See ReviewLogic tests.
+    private var optimistic = OptimisticReviews()
 
     // Notification dedup.
     private var notifiedReviews: Set<String> = []
@@ -321,11 +323,14 @@ final class AppModel: ObservableObject {
                 r.draft = old.draft
                 r.reviewing = old.reviewing
             }
-            // A submit is still in flight for this PR: keep it optimistically
-            // reviewed so a poll landing mid-submit doesn't resurrect the card.
-            if submittingReviews.contains(r.id) { r.reviewed = true }
+            // Keep an optimistically-submitted PR reviewed until the server
+            // confirms it, so a fetch landing before the review propagates
+            // doesn't resurrect the card. Confirmation clears the pending mark.
+            r.reviewed = optimistic.reconcile(id: r.id, serverReviewed: r.reviewed)
             return r
         }
+        // Forget pending marks for PRs that dropped out of the queue entirely.
+        optimistic.retain(ids: Set(incoming.map(\.id)))
     }
 
     /// Preserve self-review results across refreshes (and restore persisted ones
@@ -508,13 +513,12 @@ final class AppModel: ObservableObject {
         guard let idx = reviewQueue.firstIndex(where: { $0.id == id }) else { return }
         // Drop duplicate submissions (double-clicks, or a click that slips through
         // before the button's disabled state renders).
-        if submittingReviews.contains(id) { return }
+        guard optimistic.begin(id) else { return }
         let pr = reviewQueue[idx]
-        submittingReviews.insert(id)
         // Optimistically mark reviewed so the card clears immediately instead of
-        // waiting on the submit + sync round trip.
+        // waiting on the submit + sync round trip. The pending mark stays until a
+        // sync confirms it (see mergeQueue), so a lagging read can't resurrect it.
         reviewQueue[idx].reviewed = true
-        defer { submittingReviews.remove(id) }
         if demoMode {
             try? await Task.sleep(nanoseconds: 450_000_000) // fake latency; keep the removal
             return
@@ -525,6 +529,7 @@ final class AppModel: ObservableObject {
             await sync()
         } catch {
             // Roll back the optimistic update so the reviewer can retry.
+            optimistic.rollback(id)
             if let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = false }
             errorMessage = error.localizedDescription
         }
