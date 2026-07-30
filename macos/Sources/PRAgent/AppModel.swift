@@ -511,14 +511,19 @@ final class AppModel: ObservableObject {
 
     func submitReview(id: String, verdict: Verdict, body: String, comments: [InlineComment]) async {
         guard let idx = reviewQueue.firstIndex(where: { $0.id == id }) else { return }
+        // A Comment review doesn't fulfill the request — GitHub keeps you a
+        // requested reviewer and the server stays reviewed == false — so the card
+        // must remain. Only Approve / Request changes retire the card, and only
+        // those clear it optimistically; both still take the in-flight dedup lock.
+        let retires = verdict != .comment
         // Drop duplicate submissions (double-clicks, or a click that slips through
         // before the button's disabled state renders).
-        guard optimistic.begin(id) else { return }
+        guard optimistic.begin(id, retiresCard: retires) else { return }
+        // Clear the card immediately instead of waiting on the submit + sync round
+        // trip. The pending mark stays until a sync confirms it (see mergeQueue),
+        // so a lagging read can't resurrect it.
+        if retires { reviewQueue[idx].reviewed = true }
         let pr = reviewQueue[idx]
-        // Optimistically mark reviewed so the card clears immediately instead of
-        // waiting on the submit + sync round trip. The pending mark stays until a
-        // sync confirms it (see mergeQueue), so a lagging read can't resurrect it.
-        reviewQueue[idx].reviewed = true
         if demoMode {
             try? await Task.sleep(nanoseconds: 450_000_000) // fake latency; keep the removal
             return
@@ -527,10 +532,11 @@ final class AppModel: ObservableObject {
             try await github.submitReview(owner: pr.owner, repo: pr.repo, number: pr.number,
                                           verdict: verdict, body: body, comments: comments)
             await sync()
+            optimistic.finish(id)
         } catch {
             // Roll back the optimistic update so the reviewer can retry.
             optimistic.rollback(id)
-            if let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = false }
+            if retires, let i = reviewQueue.firstIndex(where: { $0.id == id }) { reviewQueue[i].reviewed = false }
             errorMessage = error.localizedDescription
         }
     }
