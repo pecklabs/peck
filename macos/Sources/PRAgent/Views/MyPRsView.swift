@@ -123,20 +123,25 @@ struct SnoozedSection: View {
     var body: some View {
         if !prs.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                        Image(systemName: "moon.zzz").font(.system(size: 11))
-                        Text(tr("Snoozed") + " (\(prs.count))").font(.system(size: 11, weight: .medium))
-                        Spacer()
+                HStack(spacing: 6) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                            Image(systemName: "moon.zzz").font(.system(size: 11))
+                            Text(tr("Snoozed") + " (\(prs.count))").font(.system(size: 11, weight: .medium))
+                            Spacer()
+                        }
+                        .foregroundStyle(GH.muted)
+                        .contentShape(Rectangle())
                     }
-                    .foregroundStyle(GH.muted)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    Button(tr("Wake all")) { model.unsnoozeAll() }
+                        .buttonStyle(.borderless).controlSize(.small)
+                        .help(tr("Move every snoozed PR back into the queue"))
                 }
-                .buttonStyle(.plain)
                 if expanded {
                     ForEach(prs) { pr in SnoozedRow(pr: pr) }
                 }

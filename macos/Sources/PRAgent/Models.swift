@@ -1,4 +1,5 @@
 import Foundation
+import ReviewLogic
 
 enum Verdict: String, Codable, CaseIterable {
     case approve = "APPROVE"
@@ -146,21 +147,19 @@ struct MyPullRequest: Identifiable, Equatable {
 
     var nameWithNumber: String { "\(owner)/\(repo) #\(number)" }
 
-    /// A signature of *others'* review activity on this PR: the review decision,
-    /// the approve/changes/comment counts, and each human reviewer's latest
-    /// state. You can't review your own PR, so this only shifts when someone
-    /// else acts — pushing a new commit of your own bumps `updatedAt` but leaves
-    /// this untouched. That's what lets a snoozed PR stay quiet through your own
-    /// work and wake the moment a reviewer actually leaves feedback. Bots are
-    /// excluded so CI/bot reviews don't count as human feedback.
+    /// A signature of *others'* review activity on this PR — see
+    /// `ReviewLogic.feedbackFingerprint`. It shifts only when someone else leaves
+    /// a review, never on your own pushes or re-requests, which is what lets a
+    /// snoozed PR stay quiet through your own work and wake on real feedback.
     var feedbackFingerprint: String {
-        let people = reviewers
-            .filter { !$0.isBot }
-            .map { "\($0.login):\($0.state.rawValue):\($0.reRequested)" }
-            .sorted()
-            .joined(separator: ",")
-        return "\(reviewDecision?.rawValue ?? "-")|a\(approvedCount)|c\(changesRequestedCount)"
-            + "|m\(commentedCount)|r\(reviewedCount)|\(people)"
+        ReviewLogic.feedbackFingerprint(
+            approvedCount: approvedCount,
+            changesRequestedCount: changesRequestedCount,
+            commentedCount: commentedCount,
+            reviewedCount: reviewedCount,
+            reviewers: reviewers.map {
+                ReviewLogic.ReviewerSignal(login: $0.login, state: $0.state.rawValue, isBot: $0.isBot)
+            })
     }
 
     /// Fully approved: every requested reviewer has signed off (no one still

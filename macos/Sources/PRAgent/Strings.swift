@@ -27,7 +27,9 @@ enum I18n {
         "Snooze until a reply": "답변 올 때까지 재우기",
         "Snoozed": "재운 PR",
         "Wake": "깨우기",
+        "Wake all": "모두 깨우기",
         "Move back into the queue": "큐로 다시 올리기",
+        "Move every snoozed PR back into the queue": "재운 PR을 모두 큐로 되돌려요",
         "All caught up": "다 정리됐어요",
         "Your open PRs are snoozed. Peck will wake one the moment a reviewer responds.":
             "열린 PR을 모두 재웠어요. 리뷰어가 반응하는 순간 Peck이 깨워줄게요.",

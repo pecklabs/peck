@@ -413,6 +413,9 @@ final class AppModel: ObservableObject {
             recomputeTray()
             notifyWoke(woke)
             reconcileMyPrFeedback(woke: woke)
+            // handleNotifications only posts review-request / conflict / all-approved
+            // alerts — never a "feedback" ping — so a woken PR re-entering
+            // visibleMyPrs here can't duplicate notifyWoke's message.
             handleNotifications(queue: reviewQueue, myPrs: visibleMyPrs)
             triggerSelfReviews()
         } catch {
@@ -521,6 +524,14 @@ final class AppModel: ObservableObject {
         recomputeTray()
     }
 
+    /// Empty the whole snooze list — every snoozed PR returns to the queue.
+    func unsnoozeAll() {
+        guard !snoozed.isEmpty else { return }
+        snoozed = [:]
+        persistSnoozeStore()
+        recomputeTray()
+    }
+
     /// Maintenance for the snooze store, run each sync after `myPrs` is merged:
     /// reset on account switch, wake any snoozed PR whose reviewer activity has
     /// changed since it was snoozed, and forget PRs that have closed/merged.
@@ -537,23 +548,10 @@ final class AppModel: ObservableObject {
         }
         guard !snoozed.isEmpty else { return [] }
 
-        let current = Dictionary(uniqueKeysWithValues: myPrs.map { ($0.id, $0) })
-        var woke: [String] = []
-        var changed = false
-        for (id, baseline) in snoozed {
-            guard let pr = current[id] else {
-                // No longer open (merged/closed) — stop tracking it.
-                snoozed[id] = nil
-                changed = true
-                continue
-            }
-            if pr.feedbackFingerprint != baseline {
-                snoozed[id] = nil
-                woke.append(id)
-                changed = true
-            }
-        }
-        if changed { persistSnoozeStore() }
+        let current = Dictionary(uniqueKeysWithValues: myPrs.map { ($0.id, $0.feedbackFingerprint) })
+        let (woke, closed) = ReviewLogic.snoozeChanges(baselines: snoozed, current: current)
+        for id in woke + closed { snoozed[id] = nil }
+        if !woke.isEmpty || !closed.isEmpty { persistSnoozeStore() }
         return woke
     }
 
@@ -592,9 +590,11 @@ final class AppModel: ObservableObject {
         }
         guard let prev = lastFingerprints else { return }  // first sync: baseline only
         guard settings.notifications, settings.notifyMyPrFeedback else { return }
-        let wokeSet = Set(woke)
-        for p in myPrs where snoozed[p.id] == nil && !wokeSet.contains(p.id) {
-            guard let old = prev[p.id], old != p.feedbackFingerprint else { continue }
+        // Snoozed PRs and ones that just woke are handled by the snooze path;
+        // skipping them keeps this ping from duplicating the wake ping.
+        let skip = Set(woke).union(snoozed.keys)
+        let changed = Set(ReviewLogic.changedIds(prev: prev, current: current, skipping: skip))
+        for p in myPrs where changed.contains(p.id) {
             Notifier.post(title: I18n.isKorean ? "💬 내 PR에 피드백" : "💬 Feedback on your PR",
                           body: p.title, subtitle: p.nameWithNumber,
                           userInfo: ["focusMyPr": p.id])

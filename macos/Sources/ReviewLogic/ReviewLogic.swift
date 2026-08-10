@@ -75,6 +75,73 @@ public enum ReviewLogic {
         guard !ids.isEmpty else { return latch }
         return latch.filter { ids.contains($0.key) }
     }
+
+    // MARK: Snooze / feedback detection
+
+    /// One reviewer's contribution to a PR's feedback fingerprint.
+    public struct ReviewerSignal {
+        public let login: String
+        /// The reviewer's latest submitted verdict: "approved" / "changesRequested"
+        /// / "commented", or "pending" for a request that hasn't been answered.
+        public let state: String
+        public let isBot: Bool
+        public init(login: String, state: String, isBot: Bool) {
+            self.login = login; self.state = state; self.isBot = isBot
+        }
+    }
+
+    /// A signature of *others'* review activity on a PR: the tallies of submitted
+    /// human reviews plus each human reviewer's latest verdict. Used to tell when
+    /// a snoozed PR should wake, or when an awake PR just got feedback.
+    ///
+    /// Deliberately built from *submission* signals only — the review counts and
+    /// reviewers who have actually left a verdict. It excludes anything the author
+    /// controls: the PR's rolled-up `reviewDecision` (a re-request resets it to
+    /// REVIEW_REQUIRED), the "re-requested" flag, and still-pending reviewers
+    /// (adding a reviewer is the author's action). You can't review your own PR,
+    /// so nothing here moves unless someone else acts — which is exactly the
+    /// "wake only on real feedback, not my own pushes/re-requests" contract.
+    public static func feedbackFingerprint(
+        approvedCount: Int, changesRequestedCount: Int,
+        commentedCount: Int, reviewedCount: Int,
+        reviewers: [ReviewerSignal]
+    ) -> String {
+        let people = reviewers
+            .filter { !$0.isBot && $0.state != "pending" }
+            .map { "\($0.login):\($0.state)" }
+            .sorted()
+            .joined(separator: ",")
+        return "a\(approvedCount)|c\(changesRequestedCount)|m\(commentedCount)|r\(reviewedCount)|\(people)"
+    }
+
+    /// Diff snooze baselines against the current fingerprints. `woke` = snoozed
+    /// PRs whose fingerprint changed (a reviewer responded → bring them back);
+    /// `closed` = snoozed ids no longer open (merged/closed → stop tracking).
+    public static func snoozeChanges(
+        baselines: [String: String], current: [String: String]
+    ) -> (woke: [String], closed: [String]) {
+        var woke: [String] = []
+        var closed: [String] = []
+        for (id, base) in baselines {
+            guard let now = current[id] else { closed.append(id); continue }
+            if now != base { woke.append(id) }
+        }
+        return (woke, closed)
+    }
+
+    /// Ids whose fingerprint changed since the previous sync, excluding a skip
+    /// set (snoozed PRs and ones that just woke, so a feedback ping never
+    /// duplicates the wake ping). Ids absent from `prev` are new PRs, not
+    /// feedback, so they never count — which also makes the first sync (empty
+    /// `prev`) silent.
+    public static func changedIds(
+        prev: [String: String], current: [String: String], skipping: Set<String>
+    ) -> [String] {
+        current.compactMap { id, fp in
+            guard !skipping.contains(id), let old = prev[id], old != fp else { return nil }
+            return id
+        }
+    }
 }
 
 /// Optimistic-submission bookkeeping for the review queue, kept pure so the

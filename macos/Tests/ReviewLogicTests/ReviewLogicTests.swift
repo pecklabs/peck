@@ -317,3 +317,92 @@ final class OptimisticReviewsTests: XCTestCase {
         """)
     }
 }
+
+/// Snooze / feedback detection. The fingerprint must move only when *others*
+/// review — never on the author's own re-requests or pushes — and the diff
+/// helpers must wake, drop, and dedup exactly as AppModel's sync relies on.
+final class SnoozeFeedbackTests: XCTestCase {
+    typealias R = ReviewLogic.ReviewerSignal
+    let pr = "acme/web#137"
+
+    private func fp(_ approved: Int, _ changes: Int, _ commented: Int, _ reviewed: Int,
+                   _ reviewers: [R] = []) -> String {
+        ReviewLogic.feedbackFingerprint(
+            approvedCount: approved, changesRequestedCount: changes,
+            commentedCount: commented, reviewedCount: reviewed, reviewers: reviewers)
+    }
+
+    // A reviewer submitting a review moves the fingerprint → the PR wakes.
+    func testNewReviewChangesFingerprint() {
+        let before = fp(0, 0, 0, 0, [])
+        let after = fp(1, 0, 0, 1, [R(login: "kyo", state: "approved", isBot: false)])
+        XCTAssertNotEqual(before, after)
+    }
+
+    // The #2 fix: the author re-requesting a review must NOT wake a snoozed PR.
+    // A re-request adds a pending row / flips the re-requested flag and resets the
+    // rolled-up decision — none of which are in the fingerprint — while the
+    // reviewer's submitted verdict and the counts are unchanged.
+    func testReRequestDoesNotChangeFingerprint() {
+        let approved = R(login: "kyo", state: "approved", isBot: false)
+        let beforeReRequest = fp(1, 0, 0, 1, [approved])
+        // After re-request: same submitted review, plus a now-pending reviewer.
+        let afterReRequest = fp(1, 0, 0, 1, [approved, R(login: "jin", state: "pending", isBot: false)])
+        XCTAssertEqual(beforeReRequest, afterReRequest)
+    }
+
+    // Bots don't count as human feedback and don't perturb the fingerprint.
+    func testBotReviewIsIgnored() {
+        let human = fp(0, 0, 0, 0, [])
+        let withBot = fp(0, 0, 0, 0, [R(login: "ci[bot]", state: "commented", isBot: true)])
+        XCTAssertEqual(human, withBot)
+    }
+
+    // Reviewer order doesn't matter — the fingerprint is order-independent.
+    func testFingerprintIsOrderIndependent() {
+        let a = fp(2, 0, 0, 2, [R(login: "kyo", state: "approved", isBot: false),
+                                R(login: "jin", state: "approved", isBot: false)])
+        let b = fp(2, 0, 0, 2, [R(login: "jin", state: "approved", isBot: false),
+                                R(login: "kyo", state: "approved", isBot: false)])
+        XCTAssertEqual(a, b)
+    }
+
+    // snoozeChanges: a changed fingerprint wakes; an unchanged one stays put.
+    func testSnoozeChangesWakesOnChange() {
+        let (woke, closed) = ReviewLogic.snoozeChanges(
+            baselines: [pr: "old", "acme/api#1": "same"],
+            current: [pr: "new", "acme/api#1": "same"])
+        XCTAssertEqual(woke, [pr])
+        XCTAssertTrue(closed.isEmpty)
+    }
+
+    // snoozeChanges: a snoozed PR that's no longer open is dropped, not woken.
+    func testSnoozeChangesDropsClosedPR() {
+        let (woke, closed) = ReviewLogic.snoozeChanges(
+            baselines: [pr: "x"], current: [:])
+        XCTAssertTrue(woke.isEmpty)
+        XCTAssertEqual(closed, [pr])
+    }
+
+    // changedIds: the first sync (no prior baseline) is silent — new PRs aren't
+    // "feedback", so an empty prev yields nothing.
+    func testChangedIdsFirstSyncIsSilent() {
+        let changed = ReviewLogic.changedIds(
+            prev: [:], current: [pr: "a"], skipping: [])
+        XCTAssertTrue(changed.isEmpty)
+    }
+
+    // changedIds: a fingerprint that moved since last sync is reported…
+    func testChangedIdsDetectsChange() {
+        let changed = ReviewLogic.changedIds(
+            prev: [pr: "a"], current: [pr: "b"], skipping: [])
+        XCTAssertEqual(changed, [pr])
+    }
+
+    // …unless it's in the skip set (snoozed / just-woke) — no duplicate ping.
+    func testChangedIdsHonorsSkipSet() {
+        let changed = ReviewLogic.changedIds(
+            prev: [pr: "a"], current: [pr: "b"], skipping: [pr])
+        XCTAssertTrue(changed.isEmpty)
+    }
+}
