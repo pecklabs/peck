@@ -403,6 +403,8 @@ struct CommentRow: View {
             Pill(text: tr("Approved"), color: GH.success, systemImage: "checkmark")
         case "CHANGES_REQUESTED":
             Pill(text: tr("Requested changes"), color: GH.danger, systemImage: "plusminus")
+        case "COMMENTED":
+            Pill(text: tr("Commented"), color: GH.muted, systemImage: "bubble.left")
         default:
             EmptyView()
         }
@@ -473,7 +475,11 @@ struct ReviewListRow: View {
     var body: some View {
         Button(action: select) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(req.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                HStack(alignment: .top, spacing: 6) {
+                    Text(req.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                    Spacer(minLength: 0)
+                    if req.isDraft { Pill(text: tr("Draft"), color: GH.muted, systemImage: "pencil.line") }
+                }
                 Text("\(req.nameWithNumber) · @\(req.author.login)")
                     .font(.system(size: 10)).foregroundStyle(GH.muted)
                 HStack(spacing: 8) {
@@ -508,8 +514,9 @@ struct ReviewListRow: View {
             .overlay(RoundedRectangle(cornerRadius: 9)
                 .strokeBorder(isSelected ? GH.accent : .clear, lineWidth: 1.5))
             // Dim the whole row while its verdict is submitting, matching the
-            // detail card's whole-card loading treatment.
-            .opacity(req.submitting ? 0.6 : 1)
+            // detail card's whole-card loading treatment. Draft PRs also read
+            // as slightly faded to set them apart from active review targets.
+            .opacity(req.submitting ? 0.6 : (req.isDraft ? 0.55 : 1))
             .animation(.easeInOut(duration: 0.2), value: req.submitting)
             .contentShape(Rectangle())
         }
