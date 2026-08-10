@@ -4,10 +4,14 @@ struct MyPRsView: View {
     @EnvironmentObject var model: AppModel
 
     private var sorted: [MyPullRequest] {
-        model.myPrs.sorted { a, b in
+        model.visibleMyPrs.sorted { a, b in
             if a.approvedButConflicted != b.approvedButConflicted { return a.approvedButConflicted }
             return a.updatedAt > b.updatedAt
         }
+    }
+
+    private var snoozedSorted: [MyPullRequest] {
+        model.snoozedMyPrs.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var body: some View {
@@ -17,9 +21,13 @@ struct MyPRsView: View {
                 if model.myPrs.isEmpty {
                     EmptyState(icon: "tray", title: tr("No open PRs"),
                                subtitle: tr("PRs you author will show up here with their review status."))
+                } else if sorted.isEmpty && !snoozedSorted.isEmpty {
+                    EmptyState(icon: "moon.zzz", title: tr("All caught up"),
+                               subtitle: tr("Your open PRs are snoozed. Peck will wake one the moment a reviewer responds."))
                 } else {
                     ForEach(sorted) { pr in MyPrRow(pr: pr) }
                 }
+                SnoozedSection(prs: snoozedSorted)
             }
             .padding(12)
         }
@@ -94,6 +102,74 @@ struct MyPrRow: View {
                 : GH.subtle,
             in: RoundedRectangle(cornerRadius: 9)
         )
+        .contextMenu {
+            Button {
+                model.snooze(id: pr.id)
+            } label: {
+                Label(tr("Snooze until a reply"), systemImage: "moon.zzz")
+            }
+        }
+    }
+}
+
+/// Collapsed list of PRs the user has snoozed. Peck keeps polling them and wakes
+/// one automatically when a reviewer responds; this section is just for a manual
+/// peek or an early un-snooze.
+struct SnoozedSection: View {
+    @EnvironmentObject var model: AppModel
+    var prs: [MyPullRequest]
+    @State private var expanded = false
+
+    var body: some View {
+        if !prs.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Image(systemName: "moon.zzz").font(.system(size: 11))
+                        Text(tr("Snoozed") + " (\(prs.count))").font(.system(size: 11, weight: .medium))
+                        Spacer()
+                    }
+                    .foregroundStyle(GH.muted)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if expanded {
+                    ForEach(prs) { pr in SnoozedRow(pr: pr) }
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+}
+
+struct SnoozedRow: View {
+    @EnvironmentObject var model: AppModel
+    var pr: MyPullRequest
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button { Open.url(pr.url) } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pr.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                    Text(pr.nameWithNumber).font(.system(size: 9)).foregroundStyle(GH.muted)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 6)
+            Button { model.unsnooze(id: pr.id) } label: {
+                Label(tr("Wake"), systemImage: "bell")
+                    .font(.system(size: 10))
+            }
+            .buttonStyle(.borderless).controlSize(.small)
+            .help(tr("Move back into the queue"))
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(GH.subtle.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

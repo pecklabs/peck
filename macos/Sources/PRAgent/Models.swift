@@ -146,6 +146,23 @@ struct MyPullRequest: Identifiable, Equatable {
 
     var nameWithNumber: String { "\(owner)/\(repo) #\(number)" }
 
+    /// A signature of *others'* review activity on this PR: the review decision,
+    /// the approve/changes/comment counts, and each human reviewer's latest
+    /// state. You can't review your own PR, so this only shifts when someone
+    /// else acts — pushing a new commit of your own bumps `updatedAt` but leaves
+    /// this untouched. That's what lets a snoozed PR stay quiet through your own
+    /// work and wake the moment a reviewer actually leaves feedback. Bots are
+    /// excluded so CI/bot reviews don't count as human feedback.
+    var feedbackFingerprint: String {
+        let people = reviewers
+            .filter { !$0.isBot }
+            .map { "\($0.login):\($0.state.rawValue):\($0.reRequested)" }
+            .sorted()
+            .joined(separator: ",")
+        return "\(reviewDecision?.rawValue ?? "-")|a\(approvedCount)|c\(changesRequestedCount)"
+            + "|m\(commentedCount)|r\(reviewedCount)|\(people)"
+    }
+
     /// Fully approved: every requested reviewer has signed off (no one still
     /// pending) and nobody requested changes. Note GitHub reports `reviewDecision
     /// == APPROVED` once the *required count* is met even if extra reviewers were
@@ -332,6 +349,9 @@ struct AppSettings: Codable, Equatable {
     var selfReview: Bool = true
     var autoSubmit: Bool = false
     var notifications: Bool = true
+    /// Notify when a reviewer leaves feedback on one of my PRs (awake or snoozed).
+    /// Snoozed PRs always ping on wake; this extends the same ping to awake PRs.
+    var notifyMyPrFeedback: Bool = false
     var agentBackend: AgentBackend = .claudeCLI
     var useGhAuth: Bool = false
     /// Language for the explanation shown to you (summary + risks).
@@ -346,7 +366,7 @@ struct AppSettings: Codable, Equatable {
     // Tolerate older persisted settings that lack the newer keys.
     enum CodingKeys: String, CodingKey {
         case model, pollIntervalSec, autoReview, selfReview, autoSubmit, notifications, agentBackend, useGhAuth
-        case explanationLanguage, reviewLanguage, uiLanguage, themeMode
+        case explanationLanguage, reviewLanguage, uiLanguage, themeMode, notifyMyPrFeedback
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -357,6 +377,7 @@ struct AppSettings: Codable, Equatable {
         selfReview = try c.decodeIfPresent(Bool.self, forKey: .selfReview) ?? true
         autoSubmit = try c.decodeIfPresent(Bool.self, forKey: .autoSubmit) ?? false
         notifications = try c.decodeIfPresent(Bool.self, forKey: .notifications) ?? true
+        notifyMyPrFeedback = try c.decodeIfPresent(Bool.self, forKey: .notifyMyPrFeedback) ?? false
         agentBackend = try c.decodeIfPresent(AgentBackend.self, forKey: .agentBackend) ?? .claudeCLI
         useGhAuth = try c.decodeIfPresent(Bool.self, forKey: .useGhAuth) ?? false
         explanationLanguage = try c.decodeIfPresent(String.self, forKey: .explanationLanguage) ?? "한국어"

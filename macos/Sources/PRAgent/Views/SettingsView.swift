@@ -298,6 +298,12 @@ struct SettingsView: View {
             }
         }
 
+        if model.settings.notifications {
+            toggle(tr("Notify when my PR gets feedback"), \.notifyMyPrFeedback)
+            Text(tr("A ping when a reviewer responds on one of your awake PRs. Snoozed PRs always ping when they wake."))
+                .font(.system(size: 10)).foregroundStyle(GH.muted)
+        }
+
         Button(tr("Send test notification")) {
             Notifier.post(title: "Peck", body: "Test notification ✅",
                           subtitle: "If you see this, notifications work")

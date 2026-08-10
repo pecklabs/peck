@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse
     ) async {
         let info = response.notification.request.content.userInfo
-        guard let prId = info["selfReviewPr"] as? String else { return }
+        guard let prId = (info["selfReviewPr"] ?? info["focusMyPr"]) as? String else { return }
         await MainActor.run { PeckWindow.open(model: self.model, focusMyPr: prId) }
     }
 }

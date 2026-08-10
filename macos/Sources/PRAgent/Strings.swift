@@ -24,6 +24,13 @@ enum I18n {
         "No open PRs": "열린 PR 없음",
         "PRs you author will show up here with their review status.": "당신이 올린 PR이 리뷰 상태와 함께 여기에 표시됩니다.",
         "Waiting on:": "대기 중:",
+        "Snooze until a reply": "답변 올 때까지 재우기",
+        "Snoozed": "재운 PR",
+        "Wake": "깨우기",
+        "Move back into the queue": "큐로 다시 올리기",
+        "All caught up": "다 정리됐어요",
+        "Your open PRs are snoozed. Peck will wake one the moment a reviewer responds.":
+            "열린 PR을 모두 재웠어요. 리뷰어가 반응하는 순간 Peck이 깨워줄게요.",
         "Draft": "초안",
         "Self-review": "셀프 리뷰",
         "Self-review failed": "셀프 리뷰 실패",
@@ -99,6 +106,9 @@ enum I18n {
         "Self-review my new PRs": "내 PR 셀프 리뷰",
         "Auto-submit agent verdict": "에이전트 리뷰 자동 제출",
         "Desktop notifications": "데스크탑 알림",
+        "Notify when my PR gets feedback": "내 PR에 피드백 오면 알림",
+        "A ping when a reviewer responds on one of your awake PRs. Snoozed PRs always ping when they wake.":
+            "깨어있는 PR에 리뷰어가 반응하면 알림을 보내요. 재운 PR은 깨어날 때 항상 알려요.",
         "Send test notification": "테스트 알림 보내기",
         "macOS is blocking Peck's notifications. Allow them in System Settings and this goes away.":
             "macOS가 Peck의 알림을 차단하고 있어요. 시스템 설정에서 허용하면 이 안내는 사라져요.",

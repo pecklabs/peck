@@ -83,6 +83,22 @@ final class AppModel: ObservableObject {
     /// GitHub login the persisted self-review store belongs to.
     private var selfReviewOwner: String?
 
+    /// Snoozed PRs of mine: id → the feedback fingerprint captured when it was
+    /// snoozed. Keys are the snoozed set (hidden from the queue, tray count, and
+    /// banners); Peck keeps polling them and wakes one the moment its fingerprint
+    /// changes — i.e. a reviewer leaves feedback. Persisted, account-scoped.
+    @Published private(set) var snoozed: [String: String] = [:]
+    /// GitHub login the snooze store belongs to.
+    private var snoozeOwner: String?
+
+    /// Last-seen feedback fingerprint per PR id, for detecting feedback on *awake*
+    /// PRs (the snooze path handles snoozed ones). Persisted so feedback that
+    /// arrives while the app is closed is still caught on the next launch. nil
+    /// until the first baseline, so the initial sync doesn't fire a backlog.
+    private var lastFingerprints: [String: String]?
+    /// GitHub login the fingerprint baseline belongs to.
+    private var feedbackOwner: String?
+
     /// PR id → head commit oid we last AUTO-submitted a review at. Persisted so a
     /// relaunch doesn't re-post, and keyed by head so a new commit re-arms review.
     /// Guards the auto-review loop against re-firing after its own post bumps
@@ -97,6 +113,10 @@ final class AppModel: ObservableObject {
     private let selfReviewOwnerKey = "selfReviewOwner"
     private let autoSubmittedHeadsKey = "autoSubmittedHeads"
     private let autoSubmitOwnerKey = "autoSubmitOwner"
+    private let snoozedPrsKey = "snoozedPrs"
+    private let snoozeOwnerKey = "snoozeOwner"
+    private let lastFingerprintsKey = "lastFingerprints"
+    private let feedbackOwnerKey = "feedbackOwner"
 
     init() {
         loadSettings()
@@ -105,6 +125,8 @@ final class AppModel: ObservableObject {
         hasAnthropicKey = Keychain.has(.anthropicKey)
         loadSelfReviewStore()
         loadAutoReviewStore()
+        loadSnoozeStore()
+        loadFeedbackStore()
     }
 
     private func loadSelfReviewStore() {
@@ -127,6 +149,36 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(data, forKey: selfReviewDraftsKey)
         }
         UserDefaults.standard.set(selfReviewOwner, forKey: selfReviewOwnerKey)
+    }
+
+    private func loadSnoozeStore() {
+        if let data = UserDefaults.standard.data(forKey: snoozedPrsKey),
+           let map = try? JSONDecoder().decode([String: String].self, from: data) {
+            snoozed = map
+        }
+        snoozeOwner = UserDefaults.standard.string(forKey: snoozeOwnerKey)
+    }
+
+    private func persistSnoozeStore() {
+        if let data = try? JSONEncoder().encode(snoozed) {
+            UserDefaults.standard.set(data, forKey: snoozedPrsKey)
+        }
+        UserDefaults.standard.set(snoozeOwner, forKey: snoozeOwnerKey)
+    }
+
+    private func loadFeedbackStore() {
+        if let data = UserDefaults.standard.data(forKey: lastFingerprintsKey),
+           let map = try? JSONDecoder().decode([String: String].self, from: data) {
+            lastFingerprints = map
+        }
+        feedbackOwner = UserDefaults.standard.string(forKey: feedbackOwnerKey)
+    }
+
+    private func persistFeedbackStore() {
+        if let prints = lastFingerprints, let data = try? JSONEncoder().encode(prints) {
+            UserDefaults.standard.set(data, forKey: lastFingerprintsKey)
+        }
+        UserDefaults.standard.set(feedbackOwner, forKey: feedbackOwnerKey)
     }
 
     private func loadAutoReviewStore() {
@@ -354,11 +406,14 @@ final class AppModel: ObservableObject {
             let (queue, prs) = try await (q, m)
             mergeQueue(queue)
             mergeMyPrs(prs)
+            let woke = reconcileSnooze()
             connected = true
             errorMessage = nil
             lastSync = Date()
             recomputeTray()
-            handleNotifications(queue: reviewQueue, myPrs: myPrs)
+            notifyWoke(woke)
+            reconcileMyPrFeedback(woke: woke)
+            handleNotifications(queue: reviewQueue, myPrs: visibleMyPrs)
             triggerSelfReviews()
         } catch {
             connected = false
@@ -443,8 +498,107 @@ final class AppModel: ObservableObject {
         persistSelfReviewStore()
     }
 
+    // MARK: Snooze (mute a PR until a reviewer touches it)
+
+    /// My PRs currently visible in the queue — snoozed ones are held aside.
+    var visibleMyPrs: [MyPullRequest] { myPrs.filter { snoozed[$0.id] == nil } }
+    /// My PRs the user has snoozed and Peck is watching quietly.
+    var snoozedMyPrs: [MyPullRequest] { myPrs.filter { snoozed[$0.id] != nil } }
+
+    /// Snooze a PR: drop it from the queue and record its current feedback
+    /// fingerprint as the baseline to wake against.
+    func snooze(id: String) {
+        guard let pr = myPrs.first(where: { $0.id == id }) else { return }
+        snoozed[id] = pr.feedbackFingerprint
+        persistSnoozeStore()
+        recomputeTray()
+    }
+
+    /// Wake a PR back into the queue (manual un-snooze).
+    func unsnooze(id: String) {
+        guard snoozed.removeValue(forKey: id) != nil else { return }
+        persistSnoozeStore()
+        recomputeTray()
+    }
+
+    /// Maintenance for the snooze store, run each sync after `myPrs` is merged:
+    /// reset on account switch, wake any snoozed PR whose reviewer activity has
+    /// changed since it was snoozed, and forget PRs that have closed/merged.
+    /// Returns the ids that just woke, so the caller can notify about them.
+    @discardableResult
+    private func reconcileSnooze() -> [String] {
+        // The store belongs to one account; starting fresh on a switch keeps a
+        // previous user's snoozed ids from suppressing this user's PRs.
+        if let login = user?.login, snoozeOwner != login {
+            snoozeOwner = login
+            if !snoozed.isEmpty { snoozed = [:] }
+            persistSnoozeStore()
+            return []
+        }
+        guard !snoozed.isEmpty else { return [] }
+
+        let current = Dictionary(uniqueKeysWithValues: myPrs.map { ($0.id, $0) })
+        var woke: [String] = []
+        var changed = false
+        for (id, baseline) in snoozed {
+            guard let pr = current[id] else {
+                // No longer open (merged/closed) — stop tracking it.
+                snoozed[id] = nil
+                changed = true
+                continue
+            }
+            if pr.feedbackFingerprint != baseline {
+                snoozed[id] = nil
+                woke.append(id)
+                changed = true
+            }
+        }
+        if changed { persistSnoozeStore() }
+        return woke
+    }
+
     private func recomputeTray() {
-        tray = TrayStatus.derive(connected: connected, queue: reviewQueue, myPrs: myPrs)
+        tray = TrayStatus.derive(connected: connected, queue: reviewQueue, myPrs: visibleMyPrs)
+    }
+
+    /// A snoozed PR just woke because a reviewer touched it — ping the user so
+    /// the whole point of snoozing (hear back when feedback lands) pays off.
+    private func notifyWoke(_ ids: [String]) {
+        guard settings.notifications else { return }
+        for id in ids {
+            guard let pr = myPrs.first(where: { $0.id == id }) else { continue }
+            Notifier.post(title: I18n.isKorean ? "💬 내 PR에 피드백" : "💬 Feedback on your PR",
+                          body: pr.title, subtitle: pr.nameWithNumber,
+                          userInfo: ["focusMyPr": id])
+        }
+    }
+
+    /// Detect a reviewer's feedback on *awake* PRs by diffing each PR's feedback
+    /// fingerprint against the last sync. The baseline advances every sync — even
+    /// with the toggle off, so enabling it later doesn't dump a backlog of
+    /// everything that changed while it was off — but a ping only goes out when
+    /// the toggle is on. Snoozed PRs and ones that just woke are left to the
+    /// snooze path (`notifyWoke`) so nothing double-notifies.
+    private func reconcileMyPrFeedback(woke: [String]) {
+        guard let login = user?.login else { return }
+        if feedbackOwner != login {
+            feedbackOwner = login
+            lastFingerprints = nil
+        }
+        let current = Dictionary(uniqueKeysWithValues: myPrs.map { ($0.id, $0.feedbackFingerprint) })
+        defer {
+            lastFingerprints = current
+            persistFeedbackStore()
+        }
+        guard let prev = lastFingerprints else { return }  // first sync: baseline only
+        guard settings.notifications, settings.notifyMyPrFeedback else { return }
+        let wokeSet = Set(woke)
+        for p in myPrs where snoozed[p.id] == nil && !wokeSet.contains(p.id) {
+            guard let old = prev[p.id], old != p.feedbackFingerprint else { continue }
+            Notifier.post(title: I18n.isKorean ? "💬 내 PR에 피드백" : "💬 Feedback on your PR",
+                          body: p.title, subtitle: p.nameWithNumber,
+                          userInfo: ["focusMyPr": p.id])
+        }
     }
 
     private func handleNotifications(queue: [ReviewRequest], myPrs: [MyPullRequest]) {
