@@ -199,10 +199,14 @@ struct MyPrsSplitView: View {
     @Binding var selection: String?
 
     private var sorted: [MyPullRequest] {
-        model.myPrs.sorted { a, b in
+        model.visibleMyPrs.sorted { a, b in
             if a.approvedButConflicted != b.approvedButConflicted { return a.approvedButConflicted }
             return a.updatedAt > b.updatedAt
         }
+    }
+
+    private var snoozedSorted: [MyPullRequest] {
+        model.snoozedMyPrs.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     private var selected: MyPullRequest? {
@@ -213,7 +217,7 @@ struct MyPrsSplitView: View {
         HStack(spacing: 0) {
             SnapScroll {
                 VStack(alignment: .leading, spacing: 8) {
-                    if sorted.isEmpty {
+                    if sorted.isEmpty && snoozedSorted.isEmpty {
                         EmptyState(icon: "tray", title: tr("No open PRs"),
                                    subtitle: tr("PRs you author will show up here with their review status."))
                     } else {
@@ -222,6 +226,8 @@ struct MyPrsSplitView: View {
                                 selection = pr.id
                             }
                         }
+                        // The snoozed list is window-only.
+                        SnoozedSection(prs: snoozedSorted)
                     }
                 }
                 .padding(10)
@@ -240,6 +246,7 @@ struct MyPrsSplitView: View {
 }
 
 struct MyPrListRow: View {
+    @EnvironmentObject var model: AppModel
     var pr: MyPullRequest
     var isSelected: Bool
     var select: () -> Void
@@ -271,6 +278,13 @@ struct MyPrListRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Capture the row's `model` — a subview inside .contextMenu wouldn't
+        // reliably inherit the @EnvironmentObject.
+        .contextMenu {
+            Button { model.snooze(id: pr.id) } label: {
+                Label(tr("Snooze until a review"), systemImage: "moon.zzz")
+            }
+        }
     }
 }
 

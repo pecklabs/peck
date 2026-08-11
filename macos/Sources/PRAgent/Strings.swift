@@ -107,10 +107,9 @@ enum I18n {
         "Auto-review new requests": "새 요청 자동 리뷰",
         "Self-review my new PRs": "내 PR 셀프 리뷰",
         "Auto-submit agent verdict": "에이전트 리뷰 자동 제출",
+        "Notifications": "알림",
         "Desktop notifications": "데스크탑 알림",
         "Notify when my PR gets feedback": "내 PR에 피드백 오면 알림",
-        "A ping when a reviewer responds on one of your awake PRs. Snoozed PRs always ping when they wake.":
-            "깨어있는 PR에 리뷰어가 반응하면 알림을 보내요. 재운 PR은 깨어날 때 항상 알려요.",
         "Send test notification": "테스트 알림 보내기",
         "macOS is blocking Peck's notifications. Allow them in System Settings and this goes away.":
             "macOS가 Peck의 알림을 차단하고 있어요. 시스템 설정에서 허용하면 이 안내는 사라져요.",
