@@ -422,28 +422,34 @@ final class SnoozeFeedbackTests: XCTestCase {
 
     // MARK: reconcileSync — the sync orchestration AppModel relies on
 
+    // Steady-state wrapper: stored == current format version, so no migration.
+    private func reconcile(snoozed: [String: String], prev: [String: String]?,
+                           current: [String: String], notifyAwake: Bool)
+        -> ReviewLogic.SyncReconciliation {
+        ReviewLogic.reconcileSync(
+            snoozed: snoozed, previousFingerprints: prev, current: current,
+            notifyAwakeFeedback: notifyAwake, storedFormatVersion: 7, currentFormatVersion: 7)
+    }
+
     // A snoozed PR whose fingerprint moved wakes, drops out of the snooze store,
     // and is NOT also reported as awake feedback (the wake ping owns it).
     func testReconcileWakesSnoozedAndDoesNotDoubleReport() {
         let awakePr = "acme/api#1"
-        let r = ReviewLogic.reconcileSync(
+        let r = reconcile(
             snoozed: [pr: "old"],
-            previousFingerprints: [pr: "old", awakePr: "x"],
+            prev: [pr: "old", awakePr: "x"],
             current: [pr: "new", awakePr: "x"],   // only the snoozed one changed
-            notifyAwakeFeedback: true)
+            notifyAwake: true)
         XCTAssertEqual(r.woke, [pr])
         XCTAssertTrue(r.awakeFeedback.isEmpty)          // woke is not double-reported
         XCTAssertNil(r.newSnoozed[pr])                  // dropped from snooze store
         XCTAssertEqual(r.newFingerprints, [pr: "new", awakePr: "x"])
+        XCTAssertFalse(r.migratedFormat)
     }
 
     // Feedback on an AWAKE (never-snoozed) PR is reported when the toggle is on.
     func testReconcileReportsAwakeFeedback() {
-        let r = ReviewLogic.reconcileSync(
-            snoozed: [:],
-            previousFingerprints: [pr: "old"],
-            current: [pr: "new"],
-            notifyAwakeFeedback: true)
+        let r = reconcile(snoozed: [:], prev: [pr: "old"], current: [pr: "new"], notifyAwake: true)
         XCTAssertTrue(r.woke.isEmpty)
         XCTAssertEqual(r.awakeFeedback, [pr])
     }
@@ -451,11 +457,7 @@ final class SnoozeFeedbackTests: XCTestCase {
     // Toggle off: awake feedback is silent, but the baseline still advances so
     // turning it on later doesn't dump a backlog.
     func testReconcileAwakeToggleOffIsSilentButAdvancesBaseline() {
-        let r = ReviewLogic.reconcileSync(
-            snoozed: [:],
-            previousFingerprints: [pr: "old"],
-            current: [pr: "new"],
-            notifyAwakeFeedback: false)
+        let r = reconcile(snoozed: [:], prev: [pr: "old"], current: [pr: "new"], notifyAwake: false)
         XCTAssertTrue(r.awakeFeedback.isEmpty)
         XCTAssertEqual(r.newFingerprints, [pr: "new"])  // baseline advanced regardless
     }
@@ -463,11 +465,7 @@ final class SnoozeFeedbackTests: XCTestCase {
     // First sync (nil previous baseline): silent — nothing is "feedback" yet, it
     // just establishes the baseline.
     func testReconcileFirstSyncIsSilent() {
-        let r = ReviewLogic.reconcileSync(
-            snoozed: [:],
-            previousFingerprints: nil,
-            current: [pr: "a"],
-            notifyAwakeFeedback: true)
+        let r = reconcile(snoozed: [:], prev: nil, current: [pr: "a"], notifyAwake: true)
         XCTAssertTrue(r.awakeFeedback.isEmpty)
         XCTAssertTrue(r.woke.isEmpty)
         XCTAssertEqual(r.newFingerprints, [pr: "a"])
@@ -475,11 +473,7 @@ final class SnoozeFeedbackTests: XCTestCase {
 
     // A snoozed PR that's no longer open is dropped (not woken, not reported).
     func testReconcileDropsClosedSnoozed() {
-        let r = ReviewLogic.reconcileSync(
-            snoozed: [pr: "old"],
-            previousFingerprints: [pr: "old"],
-            current: [:],                       // PR merged/closed
-            notifyAwakeFeedback: true)
+        let r = reconcile(snoozed: [pr: "old"], prev: [pr: "old"], current: [:], notifyAwake: true)
         XCTAssertTrue(r.woke.isEmpty)
         XCTAssertEqual(r.closedSnoozed, [pr])
         XCTAssertNil(r.newSnoozed[pr])
@@ -488,13 +482,54 @@ final class SnoozeFeedbackTests: XCTestCase {
     // A still-snoozed PR (unchanged) is never reported as awake feedback even
     // when it exists in the previous/current baselines.
     func testReconcileStillSnoozedIsSkippedFromAwake() {
-        let r = ReviewLogic.reconcileSync(
-            snoozed: [pr: "same"],
-            previousFingerprints: [pr: "same"],
-            current: [pr: "same"],
-            notifyAwakeFeedback: true)
+        let r = reconcile(snoozed: [pr: "same"], prev: [pr: "same"], current: [pr: "same"], notifyAwake: true)
         XCTAssertTrue(r.woke.isEmpty)
         XCTAssertTrue(r.awakeFeedback.isEmpty)
         XCTAssertEqual(r.newSnoozed[pr], "same")        // stays snoozed
+    }
+
+    // MARK: reconcileSync — fingerprint-format migration
+
+    // Format bump: stored baselines are the OLD format, so every one would
+    // mismatch the new fingerprints. The migration re-bases the snoozed set in
+    // place to the CURRENT prints (no false wake), resets the awake baseline, and
+    // reports nothing — flagging migratedFormat so the caller stamps the version.
+    func testReconcileMigratesStaleFormatSilently() {
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [pr: "v2-old-format"],
+            previousFingerprints: [pr: "v2-old-format"],
+            current: [pr: "v3-new-format"],
+            notifyAwakeFeedback: true,
+            storedFormatVersion: 2, currentFormatVersion: 3)
+        XCTAssertTrue(r.migratedFormat)
+        XCTAssertTrue(r.woke.isEmpty)                   // no false wake on the bump
+        XCTAssertTrue(r.awakeFeedback.isEmpty)          // silent
+        XCTAssertEqual(r.newSnoozed[pr], "v3-new-format")  // re-based, still snoozed
+        XCTAssertEqual(r.newFingerprints, [pr: "v3-new-format"])
+    }
+
+    // Fresh install (never stamped, stored = nil): treated as a migration — first
+    // sync just establishes the baselines, silently.
+    func testReconcileFreshInstallIsMigrationBaseline() {
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [:], previousFingerprints: nil, current: [pr: "a"],
+            notifyAwakeFeedback: true, storedFormatVersion: nil, currentFormatVersion: 3)
+        XCTAssertTrue(r.migratedFormat)
+        XCTAssertTrue(r.woke.isEmpty)
+        XCTAssertTrue(r.awakeFeedback.isEmpty)
+        XCTAssertEqual(r.newFingerprints, [pr: "a"])
+    }
+
+    // Migration drops a snoozed PR that closed while the format was stale, rather
+    // than carrying a dead id forward.
+    func testReconcileMigrationDropsClosedSnoozed() {
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [pr: "old", "acme/api#9": "old"],
+            previousFingerprints: nil,
+            current: [pr: "new"],               // acme/api#9 is gone
+            notifyAwakeFeedback: false,
+            storedFormatVersion: 2, currentFormatVersion: 3)
+        XCTAssertTrue(r.migratedFormat)
+        XCTAssertEqual(r.newSnoozed, [pr: "new"])
     }
 }

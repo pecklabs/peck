@@ -118,9 +118,10 @@ final class AppModel: ObservableObject {
     private let lastFingerprintsKey = "lastFingerprints"
     private let feedbackOwnerKey = "feedbackOwner"
     private let fingerprintVersionKey = "fingerprintFormatVersion"
-    /// Set when the persisted fingerprint format changed under us: snooze
-    /// baselines get re-based (in place, no wake) on the next reconcile.
-    private var snoozeBaselinesStale = false
+    /// The fingerprint format version the persisted baselines were written with
+    /// (nil = never stamped). Compared against the current version each sync;
+    /// reconcileFeedback re-bases and re-stamps atomically on a mismatch.
+    private var storedFingerprintVersion: Int?
 
     init() {
         loadSettings()
@@ -131,22 +132,6 @@ final class AppModel: ObservableObject {
         loadAutoReviewStore()
         loadSnoozeStore()
         loadFeedbackStore()
-        migrateFingerprintStoresIfFormatChanged()
-    }
-
-    /// The snooze / feedback baselines store raw fingerprint strings. If the
-    /// fingerprint *format* changed since they were written, every stored value
-    /// would mismatch the freshly-computed one and mass-wake / mass-notify on the
-    /// first sync. Detect that by a persisted format version: on a mismatch, drop
-    /// the awake baseline (so its first sync is a silent re-baseline) and flag the
-    /// snooze baselines for in-place re-basing (keeping the user's snoozed set,
-    /// just not waking them). Then stamp the current version.
-    private func migrateFingerprintStoresIfFormatChanged() {
-        let stored = UserDefaults.standard.object(forKey: fingerprintVersionKey) as? Int
-        guard stored != ReviewLogic.fingerprintFormatVersion else { return }
-        lastFingerprints = nil
-        snoozeBaselinesStale = !snoozed.isEmpty
-        UserDefaults.standard.set(ReviewLogic.fingerprintFormatVersion, forKey: fingerprintVersionKey)
     }
 
     private func loadSelfReviewStore() {
@@ -192,6 +177,7 @@ final class AppModel: ObservableObject {
             lastFingerprints = map
         }
         feedbackOwner = UserDefaults.standard.string(forKey: feedbackOwnerKey)
+        storedFingerprintVersion = UserDefaults.standard.object(forKey: fingerprintVersionKey) as? Int
     }
 
     private func persistFeedbackStore() {
@@ -564,7 +550,6 @@ final class AppModel: ObservableObject {
         if snoozeOwner != login {
             snoozeOwner = login
             if !snoozed.isEmpty { snoozed = [:] }
-            snoozeBaselinesStale = false
         }
         if feedbackOwner != login {
             feedbackOwner = login
@@ -572,31 +557,26 @@ final class AppModel: ObservableObject {
         }
 
         let current = Dictionary(uniqueKeysWithValues: myPrs.map { ($0.id, $0.feedbackFingerprint) })
-
-        // Fingerprint format changed under us (see migrateFingerprintStores…):
-        // re-base the still-open snoozed PRs in place (no wake), let the awake
-        // baseline rebuild silently, and skip the diff for this one sync.
-        if snoozeBaselinesStale {
-            snoozeBaselinesStale = false
-            snoozed = snoozed.reduce(into: [:]) { acc, kv in
-                if let fp = current[kv.key] { acc[kv.key] = fp }
-            }
-            lastFingerprints = current
-            persistSnoozeStore()
-            persistFeedbackStore()
-            return
-        }
-
         let result = ReviewLogic.reconcileSync(
             snoozed: snoozed,
             previousFingerprints: lastFingerprints,
             current: current,
-            notifyAwakeFeedback: settings.notifications && settings.notifyMyPrFeedback)
+            notifyAwakeFeedback: settings.notifications && settings.notifyMyPrFeedback,
+            storedFormatVersion: storedFingerprintVersion,
+            currentFormatVersion: ReviewLogic.fingerprintFormatVersion)
 
         snoozed = result.newSnoozed
         lastFingerprints = result.newFingerprints
         persistSnoozeStore()
         persistFeedbackStore()
+        // Stamp the format version LAST, only once the re-based baselines are
+        // persisted — so a crash between the two just re-migrates next launch
+        // (the re-base is idempotent) instead of leaving stale baselines under a
+        // fresh version number.
+        if result.migratedFormat {
+            storedFingerprintVersion = ReviewLogic.fingerprintFormatVersion
+            UserDefaults.standard.set(ReviewLogic.fingerprintFormatVersion, forKey: fingerprintVersionKey)
+        }
 
         postMyPrFeedback(result.woke)          // snoozed → woke: always ping (hidden PRs)
         postMyPrFeedback(result.awakeFeedback) // awake → already gated on the toggle

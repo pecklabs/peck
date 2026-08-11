@@ -174,32 +174,58 @@ public enum ReviewLogic {
         public let newSnoozed: [String: String]
         /// Awake-feedback baseline after this sync (always the current prints).
         public let newFingerprints: [String: String]
+        /// This sync re-based stale-format baselines: the caller should persist
+        /// the stores AND stamp the current format version (atomically, so a crash
+        /// before the stamp just re-migrates next launch — the re-base is
+        /// idempotent). No wake / feedback is reported on a migration sync.
+        public let migratedFormat: Bool
         public init(woke: [String], closedSnoozed: [String], awakeFeedback: [String],
-                    newSnoozed: [String: String], newFingerprints: [String: String]) {
+                    newSnoozed: [String: String], newFingerprints: [String: String],
+                    migratedFormat: Bool = false) {
             self.woke = woke; self.closedSnoozed = closedSnoozed; self.awakeFeedback = awakeFeedback
             self.newSnoozed = newSnoozed; self.newFingerprints = newFingerprints
+            self.migratedFormat = migratedFormat
         }
     }
 
     /// The steady-state feedback reconciliation for one sync, kept pure so the
-    /// ordering that AppModel relies on is unit-testable. Account switches and the
-    /// fingerprint-format migration are handled by the caller *before* this.
+    /// ordering AND the format migration that AppModel relies on are unit-testable.
+    /// Only the account switch is handled by the caller (it's about user identity).
     ///
     /// Given the snooze baselines, the previous awake baseline (`nil` on the very
-    /// first sync), and the freshly computed fingerprints, it decides:
-    ///   • which snoozed PRs wake (fingerprint moved) or drop (no longer open),
-    ///   • which *awake* PRs to ping for feedback — only when `notifyAwakeFeedback`
-    ///     and never for anything snoozed or just-woken (so a PR can't get both a
-    ///     wake ping and a feedback ping), and never on the first sync (`nil` prev),
-    ///   • the baselines to persist for next time.
-    /// The awake baseline advances every sync even when `notifyAwakeFeedback` is
-    /// off, so turning it on later doesn't dump a backlog.
+    /// first sync), the freshly computed fingerprints, and the stored vs current
+    /// fingerprint-format versions, it decides:
+    ///   • FORMAT MIGRATION first: if the stored baselines predate the current
+    ///     fingerprint format, they'd all mismatch and mass-wake. Re-base the
+    ///     snoozed set in place (drop closed), reset the awake baseline to current,
+    ///     report nothing, and flag `migratedFormat` so the caller stamps the
+    ///     version. Done atomically with the persist, so a crash before stamping
+    ///     just re-migrates (idempotent) instead of comparing stale baselines.
+    ///   • else STEADY STATE: which snoozed PRs wake (fingerprint moved) or drop
+    ///     (no longer open); which *awake* PRs to ping — only when
+    ///     `notifyAwakeFeedback`, never for anything snoozed or just-woken (no
+    ///     double ping), and never on the first sync (`nil` prev). The awake
+    ///     baseline advances every sync even with the toggle off, so enabling it
+    ///     later doesn't dump a backlog.
     public static func reconcileSync(
         snoozed: [String: String],
         previousFingerprints: [String: String]?,
         current: [String: String],
-        notifyAwakeFeedback: Bool
+        notifyAwakeFeedback: Bool,
+        storedFormatVersion: Int?,
+        currentFormatVersion: Int
     ) -> SyncReconciliation {
+        if storedFormatVersion != currentFormatVersion {
+            // Re-base the still-open snoozed PRs to their current fingerprint and
+            // reset the awake baseline — silently. Nothing is "feedback" here.
+            let rebased = snoozed.reduce(into: [String: String]()) { acc, kv in
+                if let fp = current[kv.key] { acc[kv.key] = fp }
+            }
+            return SyncReconciliation(
+                woke: [], closedSnoozed: [], awakeFeedback: [],
+                newSnoozed: rebased, newFingerprints: current, migratedFormat: true)
+        }
+
         let (woke, closed) = snoozeChanges(baselines: snoozed, current: current)
         var newSnoozed = snoozed
         for id in woke { newSnoozed[id] = nil }
