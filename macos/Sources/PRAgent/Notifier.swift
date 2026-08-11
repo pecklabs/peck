@@ -10,7 +10,9 @@ enum Notifier {
     @discardableResult
     static func requestAuthorization() async -> UNAuthorizationStatus? {
         guard Bundle.main.bundleIdentifier != nil else { return nil }
-        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        // `.badge` is required for the Dock tile's badgeLabel to render at all —
+        // macOS 12+ silently ignores badge updates from an app that never asked.
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
         return await authorizationStatus()
     }
 

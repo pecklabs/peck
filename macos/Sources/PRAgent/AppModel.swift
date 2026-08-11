@@ -587,6 +587,40 @@ final class AppModel: ObservableObject {
 
     private func recomputeTray() {
         tray = TrayStatus.derive(connected: connected, queue: reviewQueue, myPrs: visibleMyPrs)
+        updateDockBadge()
+    }
+
+    /// Mirror the menu-bar counts onto the Dock icon's badge: PRs awaiting my
+    /// review plus my PRs that need action. Peck only has a Dock icon while its
+    /// window is open, so this only shows there — a no-op the rest of the time.
+    ///
+    /// `badgeLabel` only paints if the app requested `.badge` notification
+    /// authorization at least once (macOS 12+ silently drops it otherwise) — see
+    /// `Notifier.requestAuthorization`.
+    private func updateDockBadge() {
+        NSApp.dockTile.badgeLabel = ReviewLogic.dockBadgeLabel(
+            needsReview: tray.needsReview, needAction: tray.needAction)
+    }
+
+    // MARK: Dock presence
+
+    /// Whether the standalone window is currently on screen. PeckWindow keeps
+    /// this in sync so the Dock policy has a single source of truth.
+    private var windowVisible = false
+
+    func setWindowVisible(_ visible: Bool) {
+        windowVisible = visible
+        applyDockPolicy()
+    }
+
+    /// A Dock icon (and its badge) only while the window is up; otherwise Peck is
+    /// a menu-bar-only accessory with no Dock presence.
+    func applyDockPolicy() {
+        let showsIcon = ReviewLogic.showsDockIcon(windowVisible: windowVisible)
+        NSApp.setActivationPolicy(showsIcon ? .regular : .accessory)
+        // The Dock tile may have just appeared; stamp the current count so the
+        // badge is right the instant the icon shows.
+        updateDockBadge()
     }
 
     /// Ping the user that a reviewer left feedback on their PR — used for both a

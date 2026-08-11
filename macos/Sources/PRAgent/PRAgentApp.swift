@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             runDemo()
             return
         }
-        NSApp.setActivationPolicy(.accessory)
+        model.applyDockPolicy() // menu-bar-only until a window opens
         UNUserNotificationCenter.current().delegate = self
         model.bootstrap()
 

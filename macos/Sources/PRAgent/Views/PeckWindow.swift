@@ -67,16 +67,16 @@ enum PeckWindow {
                     .environmentObject(model)
                     .environment(\.peckWindowMode, true)
                     .frame(minWidth: 780, minHeight: 520))
-            // While the window is up, behave like a normal app (Dock icon,
-            // Cmd+Tab); drop back to menu-bar-only when it closes.
+            // While the window is up, behave like a normal app (Dock icon +
+            // badge, Cmd+Tab); drop back to menu-bar-only when it closes.
             NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification, object: win, queue: .main
-            ) { _ in
-                DispatchQueue.main.async { NSApp.setActivationPolicy(.accessory) }
+            ) { [weak model] _ in
+                DispatchQueue.main.async { model?.setWindowVisible(false) }
             }
             window = win
         }
-        NSApp.setActivationPolicy(.regular)
+        model.setWindowVisible(true)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
