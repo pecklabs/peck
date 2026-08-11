@@ -417,9 +417,12 @@ final class AppModel: ObservableObject {
             errorMessage = nil
             lastSync = Date()
             recomputeTray()
-            // handleNotifications only posts review-request / conflict / all-approved
-            // alerts — never a "feedback" ping — so a woken PR re-entering
-            // visibleMyPrs here can't duplicate the wake/feedback message.
+            // Passing visibleMyPrs (not myPrs) is deliberate: a snoozed PR stays
+            // fully quiet — no conflict / all-approved alerts either, not just no
+            // feedback ping. "Snooze" means silent until a reviewer responds; a
+            // merge conflict on a snoozed PR intentionally waits until it wakes.
+            // (This also means a woken PR re-entering here can't double-fire, since
+            // handleNotifications posts no "feedback" alert of its own.)
             handleNotifications(queue: reviewQueue, myPrs: visibleMyPrs)
             triggerSelfReviews()
         } catch {
