@@ -106,7 +106,7 @@ struct MyPrRow: View {
             Button {
                 model.snooze(id: pr.id)
             } label: {
-                Label(tr("Snooze until a reply"), systemImage: "moon.zzz")
+                Label(tr("Snooze until a review"), systemImage: "moon.zzz")
             }
         }
     }

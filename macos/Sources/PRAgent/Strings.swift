@@ -24,7 +24,7 @@ enum I18n {
         "No open PRs": "열린 PR 없음",
         "PRs you author will show up here with their review status.": "당신이 올린 PR이 리뷰 상태와 함께 여기에 표시됩니다.",
         "Waiting on:": "대기 중:",
-        "Snooze until a reply": "답변 올 때까지 재우기",
+        "Snooze until a review": "리뷰 올 때까지 재우기",
         "Snoozed": "재운 PR",
         "Wake": "깨우기",
         "Wake all": "모두 깨우기",
