@@ -280,7 +280,7 @@ final class GitHubClient {
               \(prFields)
               reviewDecision mergeable
               reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
-              latestReviews(first: 50) { nodes { state author { login avatarUrl __typename } } }
+              latestReviews(first: 50) { nodes { state submittedAt author { login avatarUrl __typename } } }
               baseRef { branchProtectionRule { requiredApprovingReviewCount } }
               commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
             } }
@@ -324,7 +324,8 @@ final class GitHubClient {
                       let login = author["login"] as? String,
                       let state = reviewerState(r["state"] as? String) else { return nil }
                 return ReviewerStatus(login: login, state: state, isBot: isBot,
-                                      avatarUrl: author["avatarUrl"] as? String ?? "")
+                                      avatarUrl: author["avatarUrl"] as? String ?? "",
+                                      submittedAt: r["submittedAt"] as? String)
             }
             var reviewers: [ReviewerStatus] = reviews.compactMap { status($0, isBot: false) }
             for n in pendingNodes {

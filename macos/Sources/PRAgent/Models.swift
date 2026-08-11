@@ -100,6 +100,11 @@ struct ReviewerStatus: Codable, Equatable, Identifiable {
     var avatarUrl: String = ""
     /// Review was re-requested after this reviewer already reviewed.
     var reRequested: Bool = false
+    /// When this reviewer's latest review was submitted (raw ISO string). Only
+    /// used to detect a follow-up review at the same verdict — a second COMMENTED
+    /// review by the same person keeps the count/state but advances this — so
+    /// `feedbackFingerprint` moves and a snoozed PR wakes. nil for pending rows.
+    var submittedAt: String? = nil
 }
 
 /// A comment on a PR: discussion comment, inline review comment (has a path),
@@ -158,7 +163,8 @@ struct MyPullRequest: Identifiable, Equatable {
             commentedCount: commentedCount,
             reviewedCount: reviewedCount,
             reviewers: reviewers.map {
-                ReviewLogic.ReviewerSignal(login: $0.login, state: $0.state.rawValue, isBot: $0.isBot)
+                ReviewLogic.ReviewerSignal(login: $0.login, state: $0.state.rawValue,
+                                           isBot: $0.isBot, submittedAt: $0.submittedAt)
             })
     }
 

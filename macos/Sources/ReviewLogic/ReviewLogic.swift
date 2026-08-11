@@ -85,10 +85,21 @@ public enum ReviewLogic {
         /// / "commented", or "pending" for a request that hasn't been answered.
         public let state: String
         public let isBot: Bool
-        public init(login: String, state: String, isBot: Bool) {
-            self.login = login; self.state = state; self.isBot = isBot
+        /// When the latest review was submitted. Advances on a follow-up review at
+        /// the same verdict (which the counts/state alone would miss), so it's part
+        /// of the fingerprint. nil for pending rows (excluded anyway).
+        public let submittedAt: String?
+        public init(login: String, state: String, isBot: Bool, submittedAt: String? = nil) {
+            self.login = login; self.state = state; self.isBot = isBot; self.submittedAt = submittedAt
         }
     }
+
+    /// Version of the fingerprint string format. Persisted alongside snooze /
+    /// feedback baselines; bump whenever `feedbackFingerprint`'s output shape
+    /// changes so stale baselines from an older format are re-based silently
+    /// instead of mass-waking every PR. (v1: counts + login:state. v2: adds the
+    /// per-reviewer submittedAt.)
+    public static let fingerprintFormatVersion = 2
 
     /// A signature of *others'* review activity on a PR: the tallies of submitted
     /// human reviews plus each human reviewer's latest verdict. Used to tell when
@@ -101,6 +112,12 @@ public enum ReviewLogic {
     /// (adding a reviewer is the author's action). You can't review your own PR,
     /// so nothing here moves unless someone else acts — which is exactly the
     /// "wake only on real feedback, not my own pushes/re-requests" contract.
+    ///
+    /// Known gap: this sees *reviews* (verdicts + counts + per-reviewer
+    /// submittedAt), not plain PR discussion comments, which aren't in the base
+    /// sync. A maintainer who only leaves a conversation comment — without
+    /// submitting a review — won't move this fingerprint, so a snoozed PR won't
+    /// wake on that alone. Reviews and review-comments (the common case) do wake.
     public static func feedbackFingerprint(
         approvedCount: Int, changesRequestedCount: Int,
         commentedCount: Int, reviewedCount: Int,
@@ -108,7 +125,7 @@ public enum ReviewLogic {
     ) -> String {
         let people = reviewers
             .filter { !$0.isBot && $0.state != "pending" }
-            .map { "\($0.login):\($0.state)" }
+            .map { "\($0.login):\($0.state):\($0.submittedAt ?? "")" }
             .sorted()
             .joined(separator: ",")
         return "a\(approvedCount)|c\(changesRequestedCount)|m\(commentedCount)|r\(reviewedCount)|\(people)"

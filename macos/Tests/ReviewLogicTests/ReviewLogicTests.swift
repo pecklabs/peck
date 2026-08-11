@@ -332,6 +332,17 @@ final class SnoozeFeedbackTests: XCTestCase {
             commentedCount: commented, reviewedCount: reviewed, reviewers: reviewers)
     }
 
+    // Tier-1: a follow-up review by the same reviewer at the SAME verdict keeps
+    // the counts and state (latestReviews dedups by author) but advances their
+    // submittedAt — the fingerprint must still move so the PR wakes.
+    func testSameReviewerFollowUpReviewChangesFingerprint() {
+        let before = fp(0, 0, 1, 1, [R(login: "kyo", state: "commented", isBot: false,
+                                        submittedAt: "2026-08-10T00:00:00Z")])
+        let after = fp(0, 0, 1, 1, [R(login: "kyo", state: "commented", isBot: false,
+                                       submittedAt: "2026-08-11T09:00:00Z")])
+        XCTAssertNotEqual(before, after)
+    }
+
     // A reviewer submitting a review moves the fingerprint → the PR wakes.
     func testNewReviewChangesFingerprint() {
         let before = fp(0, 0, 0, 0, [])

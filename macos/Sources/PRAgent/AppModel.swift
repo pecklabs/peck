@@ -117,6 +117,10 @@ final class AppModel: ObservableObject {
     private let snoozeOwnerKey = "snoozeOwner"
     private let lastFingerprintsKey = "lastFingerprints"
     private let feedbackOwnerKey = "feedbackOwner"
+    private let fingerprintVersionKey = "fingerprintFormatVersion"
+    /// Set when the persisted fingerprint format changed under us: snooze
+    /// baselines get re-based (in place, no wake) on the next reconcile.
+    private var snoozeBaselinesStale = false
 
     init() {
         loadSettings()
@@ -127,6 +131,22 @@ final class AppModel: ObservableObject {
         loadAutoReviewStore()
         loadSnoozeStore()
         loadFeedbackStore()
+        migrateFingerprintStoresIfFormatChanged()
+    }
+
+    /// The snooze / feedback baselines store raw fingerprint strings. If the
+    /// fingerprint *format* changed since they were written, every stored value
+    /// would mismatch the freshly-computed one and mass-wake / mass-notify on the
+    /// first sync. Detect that by a persisted format version: on a mismatch, drop
+    /// the awake baseline (so its first sync is a silent re-baseline) and flag the
+    /// snooze baselines for in-place re-basing (keeping the user's snoozed set,
+    /// just not waking them). Then stamp the current version.
+    private func migrateFingerprintStoresIfFormatChanged() {
+        let stored = UserDefaults.standard.object(forKey: fingerprintVersionKey) as? Int
+        guard stored != ReviewLogic.fingerprintFormatVersion else { return }
+        lastFingerprints = nil
+        snoozeBaselinesStale = !snoozed.isEmpty
+        UserDefaults.standard.set(ReviewLogic.fingerprintFormatVersion, forKey: fingerprintVersionKey)
     }
 
     private func loadSelfReviewStore() {
@@ -546,9 +566,22 @@ final class AppModel: ObservableObject {
             persistSnoozeStore()
             return []
         }
-        guard !snoozed.isEmpty else { return [] }
+        guard !snoozed.isEmpty else { snoozeBaselinesStale = false; return [] }
 
         let current = Dictionary(uniqueKeysWithValues: myPrs.map { ($0.id, $0.feedbackFingerprint) })
+
+        // Fingerprint format changed under us (see migrateFingerprintStores…):
+        // re-base each still-open snoozed PR to its current fingerprint without
+        // waking anything, drop ones that have closed, then resume normal diffing.
+        if snoozeBaselinesStale {
+            snoozeBaselinesStale = false
+            snoozed = snoozed.reduce(into: [:]) { acc, kv in
+                if let fp = current[kv.key] { acc[kv.key] = fp }
+            }
+            persistSnoozeStore()
+            return []
+        }
+
         let (woke, closed) = ReviewLogic.snoozeChanges(baselines: snoozed, current: current)
         for id in woke + closed { snoozed[id] = nil }
         if !woke.isEmpty || !closed.isEmpty { persistSnoozeStore() }
