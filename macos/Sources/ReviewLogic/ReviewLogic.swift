@@ -76,6 +76,24 @@ public enum ReviewLogic {
         return latch.filter { ids.contains($0.key) }
     }
 
+    // MARK: Dock badge & presence
+
+    /// The Dock icon's badge text for the current counts: PRs awaiting my review
+    /// plus my PRs that need action (the same figures the menu bar shows). `nil`
+    /// — no badge — when nothing is pending, so a cleared queue leaves a plain
+    /// icon rather than a "0".
+    public static func dockBadgeLabel(needsReview: Int, needAction: Int) -> String? {
+        let count = needsReview + needAction
+        return count > 0 ? "\(count)" : nil
+    }
+
+    /// Whether Peck should show a Dock icon (and therefore its badge). Peck is a
+    /// menu-bar-only app: it has a Dock presence only while its window is open,
+    /// and drops back to a menu-bar accessory once the window closes.
+    public static func showsDockIcon(windowVisible: Bool) -> Bool {
+        windowVisible
+    }
+
     // MARK: Snooze / feedback detection
 
     /// The identity of one submitted review: who left it and when. `submittedAt`

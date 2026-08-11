@@ -598,8 +598,8 @@ final class AppModel: ObservableObject {
     /// authorization at least once (macOS 12+ silently drops it otherwise) — see
     /// `Notifier.requestAuthorization`.
     private func updateDockBadge() {
-        let count = tray.needsReview + tray.needAction
-        NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
+        NSApp.dockTile.badgeLabel = ReviewLogic.dockBadgeLabel(
+            needsReview: tray.needsReview, needAction: tray.needAction)
     }
 
     // MARK: Dock presence
@@ -616,7 +616,8 @@ final class AppModel: ObservableObject {
     /// A Dock icon (and its badge) only while the window is up; otherwise Peck is
     /// a menu-bar-only accessory with no Dock presence.
     func applyDockPolicy() {
-        NSApp.setActivationPolicy(windowVisible ? .regular : .accessory)
+        let showsIcon = ReviewLogic.showsDockIcon(windowVisible: windowVisible)
+        NSApp.setActivationPolicy(showsIcon ? .regular : .accessory)
         // The Dock tile may have just appeared; stamp the current count so the
         // badge is right the instant the icon shows.
         updateDockBadge()

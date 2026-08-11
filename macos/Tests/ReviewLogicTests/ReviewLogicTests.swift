@@ -541,4 +541,28 @@ final class SnoozeFeedbackTests: XCTestCase {
         XCTAssertTrue(r.migratedFormat)
         XCTAssertEqual(r.newSnoozed, [pr: "new"])
     }
+
+    // MARK: - Dock badge & presence
+
+    // Nothing pending → no badge at all (not a "0"), so the icon stays plain.
+    func testDockBadgeHiddenWhenNothingPending() {
+        XCTAssertNil(ReviewLogic.dockBadgeLabel(needsReview: 0, needAction: 0))
+    }
+
+    // Badge is the sum of both counts, matching the menu bar.
+    func testDockBadgeSumsReviewAndAction() {
+        XCTAssertEqual(ReviewLogic.dockBadgeLabel(needsReview: 2, needAction: 3), "5")
+    }
+
+    // Either count alone still badges.
+    func testDockBadgeFromEitherCountAlone() {
+        XCTAssertEqual(ReviewLogic.dockBadgeLabel(needsReview: 2, needAction: 0), "2")
+        XCTAssertEqual(ReviewLogic.dockBadgeLabel(needsReview: 0, needAction: 4), "4")
+    }
+
+    // Window open → Dock icon (and badge) shown; closed → menu-bar-only.
+    func testDockIconTracksWindowVisibility() {
+        XCTAssertTrue(ReviewLogic.showsDockIcon(windowVisible: true))
+        XCTAssertFalse(ReviewLogic.showsDockIcon(windowVisible: false))
+    }
 }
