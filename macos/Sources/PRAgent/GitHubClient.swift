@@ -324,10 +324,17 @@ final class GitHubClient {
                       let login = author["login"] as? String,
                       let state = reviewerState(r["state"] as? String) else { return nil }
                 return ReviewerStatus(login: login, state: state, isBot: isBot,
-                                      avatarUrl: author["avatarUrl"] as? String ?? "",
-                                      submittedAt: r["submittedAt"] as? String)
+                                      avatarUrl: author["avatarUrl"] as? String ?? "")
             }
             var reviewers: [ReviewerStatus] = reviews.compactMap { status($0, isBot: false) }
+            // Fingerprint source: identity of every non-bot review, INCLUDING
+            // dismissed ones (still present in latestReviews with their original
+            // submittedAt). Built from raw nodes, not `reviewers`, which drops
+            // dismissed/pending rows — see MyPullRequest.reviewSignals.
+            let reviewSignals: [ReviewLogic.ReviewSignal] = reviews.compactMap { r in
+                guard let login = (r["author"] as? [String: Any])?["login"] as? String else { return nil }
+                return ReviewLogic.ReviewSignal(login: login, submittedAt: r["submittedAt"] as? String, isBot: false)
+            }
             for n in pendingNodes {
                 guard let login = n["login"] as? String else { continue }
                 // A re-requested reviewer shows up in BOTH latestReviews and
@@ -363,7 +370,8 @@ final class GitHubClient {
                 commentedCount: commentedCount,
                 reviewedCount: reviewedCount,
                 botReviewCount: botReviewCount,
-                reviewers: reviewers
+                reviewers: reviewers,
+                reviewSignals: reviewSignals
             )
         }
     }

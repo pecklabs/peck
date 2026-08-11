@@ -78,57 +78,58 @@ public enum ReviewLogic {
 
     // MARK: Snooze / feedback detection
 
-    /// One reviewer's contribution to a PR's feedback fingerprint.
-    public struct ReviewerSignal {
+    /// The identity of one submitted review: who left it and when. `submittedAt`
+    /// stays put when a review is later dismissed (e.g. a stale-approval dismissal
+    /// from the author's own push), which is what keeps the fingerprint stable
+    /// across the author's pushes.
+    public struct ReviewSignal: Equatable {
         public let login: String
-        /// The reviewer's latest submitted verdict: "approved" / "changesRequested"
-        /// / "commented", or "pending" for a request that hasn't been answered.
-        public let state: String
-        public let isBot: Bool
-        /// When the latest review was submitted. Advances on a follow-up review at
-        /// the same verdict (which the counts/state alone would miss), so it's part
-        /// of the fingerprint. nil for pending rows (excluded anyway).
+        /// When the review was submitted (raw ISO string). A follow-up review by
+        /// the same reviewer advances this even at the same verdict; a dismissal
+        /// leaves it unchanged.
         public let submittedAt: String?
-        public init(login: String, state: String, isBot: Bool, submittedAt: String? = nil) {
-            self.login = login; self.state = state; self.isBot = isBot; self.submittedAt = submittedAt
+        public let isBot: Bool
+        public init(login: String, submittedAt: String?, isBot: Bool) {
+            self.login = login; self.submittedAt = submittedAt; self.isBot = isBot
         }
     }
 
     /// Version of the fingerprint string format. Persisted alongside snooze /
     /// feedback baselines; bump whenever `feedbackFingerprint`'s output shape
     /// changes so stale baselines from an older format are re-based silently
-    /// instead of mass-waking every PR. (v1: counts + login:state. v2: adds the
-    /// per-reviewer submittedAt.)
-    public static let fingerprintFormatVersion = 2
+    /// instead of mass-waking every PR. (v1: counts + login:state. v2: added
+    /// per-reviewer submittedAt. v3: identity-only — login:submittedAt of every
+    /// non-bot review, no verdict counts/state.)
+    public static let fingerprintFormatVersion = 3
 
-    /// A signature of *others'* review activity on a PR: the tallies of submitted
-    /// human reviews plus each human reviewer's latest verdict. Used to tell when
-    /// a snoozed PR should wake, or when an awake PR just got feedback.
+    /// A signature of *others'* review activity on a PR: the identity of every
+    /// submitted non-bot review, as `login:submittedAt`. Used to tell when a
+    /// snoozed PR should wake, or when an awake PR just got feedback.
     ///
-    /// Deliberately built from *submission* signals only — the review counts and
-    /// reviewers who have actually left a verdict. It excludes anything the author
-    /// controls: the PR's rolled-up `reviewDecision` (a re-request resets it to
-    /// REVIEW_REQUIRED), the "re-requested" flag, and still-pending reviewers
-    /// (adding a reviewer is the author's action). You can't review your own PR,
-    /// so nothing here moves unless someone else acts — which is exactly the
-    /// "wake only on real feedback, not my own pushes/re-requests" contract.
+    /// Keyed on review *identity*, deliberately NOT on verdict counts or reviewer
+    /// state, so nothing the author controls can move it:
+    ///   • You can't review your own PR — a new entry means someone else acted.
+    ///   • A re-request only adds a *pending* reviewer (no submitted review), so
+    ///     it contributes nothing.
+    ///   • A stale-approval dismissal from your own push flips a review's state to
+    ///     DISMISSED but keeps its `submittedAt` (and it stays in latestReviews),
+    ///     so its `login:submittedAt` is unchanged — the fingerprint holds and the
+    ///     PR doesn't falsely wake. (Verdict counts would drop here; that's the
+    ///     bug this identity keying avoids.)
+    /// A genuine new or follow-up review advances that reviewer's `submittedAt`,
+    /// which does move the fingerprint.
     ///
-    /// Known gap: this sees *reviews* (verdicts + counts + per-reviewer
-    /// submittedAt), not plain PR discussion comments, which aren't in the base
-    /// sync. A maintainer who only leaves a conversation comment — without
-    /// submitting a review — won't move this fingerprint, so a snoozed PR won't
-    /// wake on that alone. Reviews and review-comments (the common case) do wake.
-    public static func feedbackFingerprint(
-        approvedCount: Int, changesRequestedCount: Int,
-        commentedCount: Int, reviewedCount: Int,
-        reviewers: [ReviewerSignal]
-    ) -> String {
-        let people = reviewers
-            .filter { !$0.isBot && $0.state != "pending" }
-            .map { "\($0.login):\($0.state):\($0.submittedAt ?? "")" }
+    /// Known gap: this sees *reviews*, not plain PR discussion comments, which
+    /// aren't in the base sync. A maintainer who only leaves a conversation
+    /// comment — without submitting a review — won't move this fingerprint, so a
+    /// snoozed PR won't wake on that alone. Reviews and review-comments (the
+    /// common case) do wake.
+    public static func feedbackFingerprint(reviews: [ReviewSignal]) -> String {
+        reviews
+            .filter { !$0.isBot }
+            .map { "\($0.login):\($0.submittedAt ?? "")" }
             .sorted()
             .joined(separator: ",")
-        return "a\(approvedCount)|c\(changesRequestedCount)|m\(commentedCount)|r\(reviewedCount)|\(people)"
     }
 
     /// Diff snooze baselines against the current fingerprints. `woke` = snoozed

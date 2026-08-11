@@ -100,11 +100,6 @@ struct ReviewerStatus: Codable, Equatable, Identifiable {
     var avatarUrl: String = ""
     /// Review was re-requested after this reviewer already reviewed.
     var reRequested: Bool = false
-    /// When this reviewer's latest review was submitted (raw ISO string). Only
-    /// used to detect a follow-up review at the same verdict — a second COMMENTED
-    /// review by the same person keeps the count/state but advances this — so
-    /// `feedbackFingerprint` moves and a snoozed PR wakes. nil for pending rows.
-    var submittedAt: String? = nil
 }
 
 /// A comment on a PR: discussion comment, inline review comment (has a path),
@@ -146,6 +141,11 @@ struct MyPullRequest: Identifiable, Equatable {
     var botReviewCount: Int = 0
     /// Per-reviewer latest state (humans first, then pending, bots last).
     var reviewers: [ReviewerStatus] = []
+    /// Identity of every non-bot review (incl. dismissed) as login+submittedAt,
+    /// the raw source for `feedbackFingerprint`. Kept separate from `reviewers`
+    /// (the UI model, which drops dismissed/pending rows) so a stale-approval
+    /// dismissal from your own push doesn't move the fingerprint.
+    var reviewSignals: [ReviewLogic.ReviewSignal] = []
     /// One-shot agent self-review, generated when the PR is first uploaded.
     var selfReview: ReviewDraft? = nil
     var selfReviewing: Bool = false
@@ -157,15 +157,7 @@ struct MyPullRequest: Identifiable, Equatable {
     /// a review, never on your own pushes or re-requests, which is what lets a
     /// snoozed PR stay quiet through your own work and wake on real feedback.
     var feedbackFingerprint: String {
-        ReviewLogic.feedbackFingerprint(
-            approvedCount: approvedCount,
-            changesRequestedCount: changesRequestedCount,
-            commentedCount: commentedCount,
-            reviewedCount: reviewedCount,
-            reviewers: reviewers.map {
-                ReviewLogic.ReviewerSignal(login: $0.login, state: $0.state.rawValue,
-                                           isBot: $0.isBot, submittedAt: $0.submittedAt)
-            })
+        ReviewLogic.feedbackFingerprint(reviews: reviewSignals)
     }
 
     /// Fully approved: every requested reviewer has signed off (no one still

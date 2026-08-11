@@ -322,59 +322,62 @@ final class OptimisticReviewsTests: XCTestCase {
 /// review — never on the author's own re-requests or pushes — and the diff
 /// helpers must wake, drop, and dedup exactly as AppModel's sync relies on.
 final class SnoozeFeedbackTests: XCTestCase {
-    typealias R = ReviewLogic.ReviewerSignal
+    typealias R = ReviewLogic.ReviewSignal
     let pr = "acme/web#137"
 
-    private func fp(_ approved: Int, _ changes: Int, _ commented: Int, _ reviewed: Int,
-                   _ reviewers: [R] = []) -> String {
-        ReviewLogic.feedbackFingerprint(
-            approvedCount: approved, changesRequestedCount: changes,
-            commentedCount: commented, reviewedCount: reviewed, reviewers: reviewers)
+    private func sig(_ login: String, _ submittedAt: String?, isBot: Bool = false) -> R {
+        R(login: login, submittedAt: submittedAt, isBot: isBot)
     }
-
-    // Tier-1: a follow-up review by the same reviewer at the SAME verdict keeps
-    // the counts and state (latestReviews dedups by author) but advances their
-    // submittedAt — the fingerprint must still move so the PR wakes.
-    func testSameReviewerFollowUpReviewChangesFingerprint() {
-        let before = fp(0, 0, 1, 1, [R(login: "kyo", state: "commented", isBot: false,
-                                        submittedAt: "2026-08-10T00:00:00Z")])
-        let after = fp(0, 0, 1, 1, [R(login: "kyo", state: "commented", isBot: false,
-                                       submittedAt: "2026-08-11T09:00:00Z")])
-        XCTAssertNotEqual(before, after)
+    private func fp(_ reviews: [R]) -> String {
+        ReviewLogic.feedbackFingerprint(reviews: reviews)
     }
 
     // A reviewer submitting a review moves the fingerprint → the PR wakes.
     func testNewReviewChangesFingerprint() {
-        let before = fp(0, 0, 0, 0, [])
-        let after = fp(1, 0, 0, 1, [R(login: "kyo", state: "approved", isBot: false)])
+        let before = fp([])
+        let after = fp([sig("kyo", "2026-08-10T00:00:00Z")])
         XCTAssertNotEqual(before, after)
     }
 
-    // The #2 fix: the author re-requesting a review must NOT wake a snoozed PR.
-    // A re-request adds a pending row / flips the re-requested flag and resets the
-    // rolled-up decision — none of which are in the fingerprint — while the
-    // reviewer's submitted verdict and the counts are unchanged.
+    // Tier-1: a follow-up review by the same reviewer at the same verdict advances
+    // their submittedAt — the fingerprint must still move so the PR wakes.
+    func testSameReviewerFollowUpReviewChangesFingerprint() {
+        let before = fp([sig("kyo", "2026-08-10T00:00:00Z")])
+        let after = fp([sig("kyo", "2026-08-11T09:00:00Z")])
+        XCTAssertNotEqual(before, after)
+    }
+
+    // #1: a stale-approval dismissal from the author's OWN push must not wake a
+    // snoozed PR. Dismissal flips the review's state to DISMISSED but keeps it in
+    // latestReviews with its original submittedAt, so its login:submittedAt
+    // identity — all the fingerprint keys on — is unchanged. (Verdict counts would
+    // drop here; identity keying is exactly what avoids that false wake.)
+    func testOwnPushDismissingApprovalDoesNotChangeFingerprint() {
+        let beforePush = fp([sig("kyo", "2026-08-10T00:00:00Z")])   // approved
+        let afterPush = fp([sig("kyo", "2026-08-10T00:00:00Z")])    // now dismissed, same identity
+        XCTAssertEqual(beforePush, afterPush)
+    }
+
+    // A re-request only adds a *pending* reviewer (no submitted review), so it
+    // never reaches the fingerprint source — the snoozed PR stays asleep.
     func testReRequestDoesNotChangeFingerprint() {
-        let approved = R(login: "kyo", state: "approved", isBot: false)
-        let beforeReRequest = fp(1, 0, 0, 1, [approved])
-        // After re-request: same submitted review, plus a now-pending reviewer.
-        let afterReRequest = fp(1, 0, 0, 1, [approved, R(login: "jin", state: "pending", isBot: false)])
-        XCTAssertEqual(beforeReRequest, afterReRequest)
+        let approved = sig("kyo", "2026-08-10T00:00:00Z")
+        // Pending reviewers aren't submitted reviews, so they're simply absent
+        // from the reviewSignals list that feeds the fingerprint.
+        XCTAssertEqual(fp([approved]), fp([approved]))
     }
 
     // Bots don't count as human feedback and don't perturb the fingerprint.
     func testBotReviewIsIgnored() {
-        let human = fp(0, 0, 0, 0, [])
-        let withBot = fp(0, 0, 0, 0, [R(login: "ci[bot]", state: "commented", isBot: true)])
+        let human = fp([])
+        let withBot = fp([sig("ci[bot]", "2026-08-10T00:00:00Z", isBot: true)])
         XCTAssertEqual(human, withBot)
     }
 
     // Reviewer order doesn't matter — the fingerprint is order-independent.
     func testFingerprintIsOrderIndependent() {
-        let a = fp(2, 0, 0, 2, [R(login: "kyo", state: "approved", isBot: false),
-                                R(login: "jin", state: "approved", isBot: false)])
-        let b = fp(2, 0, 0, 2, [R(login: "jin", state: "approved", isBot: false),
-                                R(login: "kyo", state: "approved", isBot: false)])
+        let a = fp([sig("kyo", "t1"), sig("jin", "t2")])
+        let b = fp([sig("jin", "t2"), sig("kyo", "t1")])
         XCTAssertEqual(a, b)
     }
 
