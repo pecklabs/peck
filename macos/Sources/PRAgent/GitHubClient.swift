@@ -327,13 +327,17 @@ final class GitHubClient {
                                       avatarUrl: author["avatarUrl"] as? String ?? "")
             }
             var reviewers: [ReviewerStatus] = reviews.compactMap { status($0, isBot: false) }
-            // Fingerprint source: identity of every non-bot review, INCLUDING
-            // dismissed ones (still present in latestReviews with their original
-            // submittedAt). Built from raw nodes, not `reviewers`, which drops
-            // dismissed/pending rows — see MyPullRequest.reviewSignals.
-            let reviewSignals: [ReviewLogic.ReviewSignal] = reviews.compactMap { r in
+            // Fingerprint source: identity of every review, INCLUDING dismissed
+            // ones (still in latestReviews with their original submittedAt) and
+            // bot reviews. Built from the raw `allReviews` nodes — not `reviewers`
+            // (drops dismissed/pending) — and carries each review's real isBot so
+            // ReviewLogic.feedbackFingerprint's bot filter is the single source of
+            // truth for exclusion, rather than an assumption baked in here. See
+            // MyPullRequest.reviewSignals.
+            let reviewSignals: [ReviewLogic.ReviewSignal] = allReviews.compactMap { r in
                 guard let login = (r["author"] as? [String: Any])?["login"] as? String else { return nil }
-                return ReviewLogic.ReviewSignal(login: login, submittedAt: r["submittedAt"] as? String, isBot: false)
+                return ReviewLogic.ReviewSignal(login: login, submittedAt: r["submittedAt"] as? String,
+                                                isBot: isBotReview(r))
             }
             for n in pendingNodes {
                 guard let login = n["login"] as? String else { continue }

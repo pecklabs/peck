@@ -374,6 +374,15 @@ final class SnoozeFeedbackTests: XCTestCase {
         XCTAssertEqual(human, withBot)
     }
 
+    // A bot review landing alongside a human review must not move the fingerprint
+    // — so a dependabot/codecov review can't wake a snoozed PR. (GitHubClient now
+    // feeds bot signals through with isBot:true; this filter is what excludes them.)
+    func testBotReviewAlongsideHumanIsIgnored() {
+        let humanOnly = fp([sig("kyo", "t1")])
+        let withBot = fp([sig("kyo", "t1"), sig("dependabot[bot]", "t2", isBot: true)])
+        XCTAssertEqual(humanOnly, withBot)
+    }
+
     // Reviewer order doesn't matter — the fingerprint is order-independent.
     func testFingerprintIsOrderIndependent() {
         let a = fp([sig("kyo", "t1"), sig("jin", "t2")])
