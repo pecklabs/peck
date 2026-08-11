@@ -75,6 +75,175 @@ public enum ReviewLogic {
         guard !ids.isEmpty else { return latch }
         return latch.filter { ids.contains($0.key) }
     }
+
+    // MARK: Snooze / feedback detection
+
+    /// The identity of one submitted review: who left it and when. `submittedAt`
+    /// stays put when a review is later dismissed (e.g. a stale-approval dismissal
+    /// from the author's own push), which is what keeps the fingerprint stable
+    /// across the author's pushes.
+    public struct ReviewSignal: Equatable {
+        public let login: String
+        /// When the review was submitted (raw ISO string). A follow-up review by
+        /// the same reviewer advances this even at the same verdict; a dismissal
+        /// leaves it unchanged.
+        public let submittedAt: String?
+        public let isBot: Bool
+        public init(login: String, submittedAt: String?, isBot: Bool) {
+            self.login = login; self.submittedAt = submittedAt; self.isBot = isBot
+        }
+    }
+
+    /// Version of the fingerprint string format. Persisted alongside snooze /
+    /// feedback baselines; bump whenever `feedbackFingerprint`'s output shape
+    /// changes so stale baselines from an older format are re-based silently
+    /// instead of mass-waking every PR. (v1: counts + login:state. v2: added
+    /// per-reviewer submittedAt. v3: identity-only — login:submittedAt of every
+    /// non-bot review, no verdict counts/state.)
+    public static let fingerprintFormatVersion = 3
+
+    /// A signature of *others'* review activity on a PR: the identity of every
+    /// submitted non-bot review, as `login:submittedAt`. Used to tell when a
+    /// snoozed PR should wake, or when an awake PR just got feedback.
+    ///
+    /// Keyed on review *identity*, deliberately NOT on verdict counts or reviewer
+    /// state, so nothing the author controls can move it:
+    ///   • You can't review your own PR — a new entry means someone else acted.
+    ///   • A re-request only adds a *pending* reviewer (no submitted review), so
+    ///     it contributes nothing.
+    ///   • A stale-approval dismissal from your own push flips a review's state to
+    ///     DISMISSED but keeps its `submittedAt` (and it stays in latestReviews),
+    ///     so its `login:submittedAt` is unchanged — the fingerprint holds and the
+    ///     PR doesn't falsely wake. (Verdict counts would drop here; that's the
+    ///     bug this identity keying avoids.)
+    /// A genuine new or follow-up review advances that reviewer's `submittedAt`,
+    /// which does move the fingerprint.
+    ///
+    /// Known gap: this sees *reviews*, not plain PR discussion comments, which
+    /// aren't in the base sync. A maintainer who only leaves a conversation
+    /// comment — without submitting a review — won't move this fingerprint, so a
+    /// snoozed PR won't wake on that alone. Reviews and review-comments (the
+    /// common case) do wake.
+    public static func feedbackFingerprint(reviews: [ReviewSignal]) -> String {
+        reviews
+            .filter { !$0.isBot }
+            .map { "\($0.login):\($0.submittedAt ?? "")" }
+            .sorted()
+            .joined(separator: ",")
+    }
+
+    /// Diff snooze baselines against the current fingerprints. `woke` = snoozed
+    /// PRs whose fingerprint changed (a reviewer responded → bring them back);
+    /// `closed` = snoozed ids no longer open (merged/closed → stop tracking).
+    public static func snoozeChanges(
+        baselines: [String: String], current: [String: String]
+    ) -> (woke: [String], closed: [String]) {
+        var woke: [String] = []
+        var closed: [String] = []
+        for (id, base) in baselines {
+            guard let now = current[id] else { closed.append(id); continue }
+            if now != base { woke.append(id) }
+        }
+        return (woke, closed)
+    }
+
+    /// Ids whose fingerprint changed since the previous sync, excluding a skip
+    /// set (snoozed PRs and ones that just woke, so a feedback ping never
+    /// duplicates the wake ping). Ids absent from `prev` are new PRs, not
+    /// feedback, so they never count — which also makes the first sync (empty
+    /// `prev`) silent.
+    public static func changedIds(
+        prev: [String: String], current: [String: String], skipping: Set<String>
+    ) -> [String] {
+        current.compactMap { id, fp in
+            guard !skipping.contains(id), let old = prev[id], old != fp else { return nil }
+            return id
+        }
+    }
+
+    /// The result of reconciling one sync's fingerprints against the stored
+    /// baselines — see `reconcileSync`.
+    public struct SyncReconciliation: Equatable {
+        /// Snoozed PRs a reviewer touched → bring them back and ping.
+        public let woke: [String]
+        /// Snoozed ids no longer open (merged/closed) → stop tracking.
+        public let closedSnoozed: [String]
+        /// Awake PRs that got feedback → ping (already excludes woke/snoozed).
+        public let awakeFeedback: [String]
+        /// Snooze baselines after this sync (woke + closed removed).
+        public let newSnoozed: [String: String]
+        /// Awake-feedback baseline after this sync (always the current prints).
+        public let newFingerprints: [String: String]
+        /// This sync re-based stale-format baselines: the caller should persist
+        /// the stores AND stamp the current format version (atomically, so a crash
+        /// before the stamp just re-migrates next launch — the re-base is
+        /// idempotent). No wake / feedback is reported on a migration sync.
+        public let migratedFormat: Bool
+        public init(woke: [String], closedSnoozed: [String], awakeFeedback: [String],
+                    newSnoozed: [String: String], newFingerprints: [String: String],
+                    migratedFormat: Bool = false) {
+            self.woke = woke; self.closedSnoozed = closedSnoozed; self.awakeFeedback = awakeFeedback
+            self.newSnoozed = newSnoozed; self.newFingerprints = newFingerprints
+            self.migratedFormat = migratedFormat
+        }
+    }
+
+    /// The steady-state feedback reconciliation for one sync, kept pure so the
+    /// ordering AND the format migration that AppModel relies on are unit-testable.
+    /// Only the account switch is handled by the caller (it's about user identity).
+    ///
+    /// Given the snooze baselines, the previous awake baseline (`nil` on the very
+    /// first sync), the freshly computed fingerprints, and the stored vs current
+    /// fingerprint-format versions, it decides:
+    ///   • FORMAT MIGRATION first: if the stored baselines predate the current
+    ///     fingerprint format, they'd all mismatch and mass-wake. Re-base the
+    ///     snoozed set in place (drop closed), reset the awake baseline to current,
+    ///     report nothing, and flag `migratedFormat` so the caller stamps the
+    ///     version. Done atomically with the persist, so a crash before stamping
+    ///     just re-migrates (idempotent) instead of comparing stale baselines.
+    ///   • else STEADY STATE: which snoozed PRs wake (fingerprint moved) or drop
+    ///     (no longer open); which *awake* PRs to ping — only when
+    ///     `notifyAwakeFeedback`, never for anything snoozed or just-woken (no
+    ///     double ping), and never on the first sync (`nil` prev). The awake
+    ///     baseline advances every sync even with the toggle off, so enabling it
+    ///     later doesn't dump a backlog.
+    public static func reconcileSync(
+        snoozed: [String: String],
+        previousFingerprints: [String: String]?,
+        current: [String: String],
+        notifyAwakeFeedback: Bool,
+        storedFormatVersion: Int?,
+        currentFormatVersion: Int
+    ) -> SyncReconciliation {
+        if storedFormatVersion != currentFormatVersion {
+            // Re-base the still-open snoozed PRs to their current fingerprint and
+            // reset the awake baseline — silently. Nothing is "feedback" here.
+            let rebased = snoozed.reduce(into: [String: String]()) { acc, kv in
+                if let fp = current[kv.key] { acc[kv.key] = fp }
+            }
+            return SyncReconciliation(
+                woke: [], closedSnoozed: [], awakeFeedback: [],
+                newSnoozed: rebased, newFingerprints: current, migratedFormat: true)
+        }
+
+        let (woke, closed) = snoozeChanges(baselines: snoozed, current: current)
+        var newSnoozed = snoozed
+        for id in woke { newSnoozed[id] = nil }
+        for id in closed { newSnoozed[id] = nil }
+
+        let awake: [String]
+        if notifyAwakeFeedback, let prev = previousFingerprints {
+            // Skip everything that was snoozed (woke ⊆ snoozed) — the snooze path
+            // owns those pings.
+            awake = changedIds(prev: prev, current: current, skipping: Set(snoozed.keys))
+        } else {
+            awake = []
+        }
+
+        return SyncReconciliation(
+            woke: woke, closedSnoozed: closed, awakeFeedback: awake,
+            newSnoozed: newSnoozed, newFingerprints: current)
+    }
 }
 
 /// Optimistic-submission bookkeeping for the review queue, kept pure so the

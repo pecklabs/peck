@@ -280,7 +280,7 @@ final class GitHubClient {
               \(prFields)
               reviewDecision mergeable
               reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
-              latestReviews(first: 50) { nodes { state author { login avatarUrl __typename } } }
+              latestReviews(first: 50) { nodes { state submittedAt author { login avatarUrl __typename } } }
               baseRef { branchProtectionRule { requiredApprovingReviewCount } }
               commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
             } }
@@ -327,6 +327,18 @@ final class GitHubClient {
                                       avatarUrl: author["avatarUrl"] as? String ?? "")
             }
             var reviewers: [ReviewerStatus] = reviews.compactMap { status($0, isBot: false) }
+            // Fingerprint source: identity of every review, INCLUDING dismissed
+            // ones (still in latestReviews with their original submittedAt) and
+            // bot reviews. Built from the raw `allReviews` nodes — not `reviewers`
+            // (drops dismissed/pending) — and carries each review's real isBot so
+            // ReviewLogic.feedbackFingerprint's bot filter is the single source of
+            // truth for exclusion, rather than an assumption baked in here. See
+            // MyPullRequest.reviewSignals.
+            let reviewSignals: [ReviewLogic.ReviewSignal] = allReviews.compactMap { r in
+                guard let login = (r["author"] as? [String: Any])?["login"] as? String else { return nil }
+                return ReviewLogic.ReviewSignal(login: login, submittedAt: r["submittedAt"] as? String,
+                                                isBot: isBotReview(r))
+            }
             for n in pendingNodes {
                 guard let login = n["login"] as? String else { continue }
                 // A re-requested reviewer shows up in BOTH latestReviews and
@@ -362,7 +374,8 @@ final class GitHubClient {
                 commentedCount: commentedCount,
                 reviewedCount: reviewedCount,
                 botReviewCount: botReviewCount,
-                reviewers: reviewers
+                reviewers: reviewers,
+                reviewSignals: reviewSignals
             )
         }
     }
