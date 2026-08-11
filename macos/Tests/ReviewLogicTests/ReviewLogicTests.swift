@@ -419,4 +419,82 @@ final class SnoozeFeedbackTests: XCTestCase {
             prev: [pr: "a"], current: [pr: "b"], skipping: [pr])
         XCTAssertTrue(changed.isEmpty)
     }
+
+    // MARK: reconcileSync — the sync orchestration AppModel relies on
+
+    // A snoozed PR whose fingerprint moved wakes, drops out of the snooze store,
+    // and is NOT also reported as awake feedback (the wake ping owns it).
+    func testReconcileWakesSnoozedAndDoesNotDoubleReport() {
+        let awakePr = "acme/api#1"
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [pr: "old"],
+            previousFingerprints: [pr: "old", awakePr: "x"],
+            current: [pr: "new", awakePr: "x"],   // only the snoozed one changed
+            notifyAwakeFeedback: true)
+        XCTAssertEqual(r.woke, [pr])
+        XCTAssertTrue(r.awakeFeedback.isEmpty)          // woke is not double-reported
+        XCTAssertNil(r.newSnoozed[pr])                  // dropped from snooze store
+        XCTAssertEqual(r.newFingerprints, [pr: "new", awakePr: "x"])
+    }
+
+    // Feedback on an AWAKE (never-snoozed) PR is reported when the toggle is on.
+    func testReconcileReportsAwakeFeedback() {
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [:],
+            previousFingerprints: [pr: "old"],
+            current: [pr: "new"],
+            notifyAwakeFeedback: true)
+        XCTAssertTrue(r.woke.isEmpty)
+        XCTAssertEqual(r.awakeFeedback, [pr])
+    }
+
+    // Toggle off: awake feedback is silent, but the baseline still advances so
+    // turning it on later doesn't dump a backlog.
+    func testReconcileAwakeToggleOffIsSilentButAdvancesBaseline() {
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [:],
+            previousFingerprints: [pr: "old"],
+            current: [pr: "new"],
+            notifyAwakeFeedback: false)
+        XCTAssertTrue(r.awakeFeedback.isEmpty)
+        XCTAssertEqual(r.newFingerprints, [pr: "new"])  // baseline advanced regardless
+    }
+
+    // First sync (nil previous baseline): silent — nothing is "feedback" yet, it
+    // just establishes the baseline.
+    func testReconcileFirstSyncIsSilent() {
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [:],
+            previousFingerprints: nil,
+            current: [pr: "a"],
+            notifyAwakeFeedback: true)
+        XCTAssertTrue(r.awakeFeedback.isEmpty)
+        XCTAssertTrue(r.woke.isEmpty)
+        XCTAssertEqual(r.newFingerprints, [pr: "a"])
+    }
+
+    // A snoozed PR that's no longer open is dropped (not woken, not reported).
+    func testReconcileDropsClosedSnoozed() {
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [pr: "old"],
+            previousFingerprints: [pr: "old"],
+            current: [:],                       // PR merged/closed
+            notifyAwakeFeedback: true)
+        XCTAssertTrue(r.woke.isEmpty)
+        XCTAssertEqual(r.closedSnoozed, [pr])
+        XCTAssertNil(r.newSnoozed[pr])
+    }
+
+    // A still-snoozed PR (unchanged) is never reported as awake feedback even
+    // when it exists in the previous/current baselines.
+    func testReconcileStillSnoozedIsSkippedFromAwake() {
+        let r = ReviewLogic.reconcileSync(
+            snoozed: [pr: "same"],
+            previousFingerprints: [pr: "same"],
+            current: [pr: "same"],
+            notifyAwakeFeedback: true)
+        XCTAssertTrue(r.woke.isEmpty)
+        XCTAssertTrue(r.awakeFeedback.isEmpty)
+        XCTAssertEqual(r.newSnoozed[pr], "same")        // stays snoozed
+    }
 }

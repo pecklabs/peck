@@ -160,6 +160,64 @@ public enum ReviewLogic {
             return id
         }
     }
+
+    /// The result of reconciling one sync's fingerprints against the stored
+    /// baselines — see `reconcileSync`.
+    public struct SyncReconciliation: Equatable {
+        /// Snoozed PRs a reviewer touched → bring them back and ping.
+        public let woke: [String]
+        /// Snoozed ids no longer open (merged/closed) → stop tracking.
+        public let closedSnoozed: [String]
+        /// Awake PRs that got feedback → ping (already excludes woke/snoozed).
+        public let awakeFeedback: [String]
+        /// Snooze baselines after this sync (woke + closed removed).
+        public let newSnoozed: [String: String]
+        /// Awake-feedback baseline after this sync (always the current prints).
+        public let newFingerprints: [String: String]
+        public init(woke: [String], closedSnoozed: [String], awakeFeedback: [String],
+                    newSnoozed: [String: String], newFingerprints: [String: String]) {
+            self.woke = woke; self.closedSnoozed = closedSnoozed; self.awakeFeedback = awakeFeedback
+            self.newSnoozed = newSnoozed; self.newFingerprints = newFingerprints
+        }
+    }
+
+    /// The steady-state feedback reconciliation for one sync, kept pure so the
+    /// ordering that AppModel relies on is unit-testable. Account switches and the
+    /// fingerprint-format migration are handled by the caller *before* this.
+    ///
+    /// Given the snooze baselines, the previous awake baseline (`nil` on the very
+    /// first sync), and the freshly computed fingerprints, it decides:
+    ///   • which snoozed PRs wake (fingerprint moved) or drop (no longer open),
+    ///   • which *awake* PRs to ping for feedback — only when `notifyAwakeFeedback`
+    ///     and never for anything snoozed or just-woken (so a PR can't get both a
+    ///     wake ping and a feedback ping), and never on the first sync (`nil` prev),
+    ///   • the baselines to persist for next time.
+    /// The awake baseline advances every sync even when `notifyAwakeFeedback` is
+    /// off, so turning it on later doesn't dump a backlog.
+    public static func reconcileSync(
+        snoozed: [String: String],
+        previousFingerprints: [String: String]?,
+        current: [String: String],
+        notifyAwakeFeedback: Bool
+    ) -> SyncReconciliation {
+        let (woke, closed) = snoozeChanges(baselines: snoozed, current: current)
+        var newSnoozed = snoozed
+        for id in woke { newSnoozed[id] = nil }
+        for id in closed { newSnoozed[id] = nil }
+
+        let awake: [String]
+        if notifyAwakeFeedback, let prev = previousFingerprints {
+            // Skip everything that was snoozed (woke ⊆ snoozed) — the snooze path
+            // owns those pings.
+            awake = changedIds(prev: prev, current: current, skipping: Set(snoozed.keys))
+        } else {
+            awake = []
+        }
+
+        return SyncReconciliation(
+            woke: woke, closedSnoozed: closed, awakeFeedback: awake,
+            newSnoozed: newSnoozed, newFingerprints: current)
+    }
 }
 
 /// Optimistic-submission bookkeeping for the review queue, kept pure so the
