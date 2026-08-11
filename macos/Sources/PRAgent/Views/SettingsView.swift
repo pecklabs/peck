@@ -214,6 +214,9 @@ struct SettingsView: View {
                 toggle(tr("Auto-review new requests"), \.autoReview)
                 toggle(tr("Self-review my new PRs"), \.selfReview)
                 toggle(tr("Auto-submit agent verdict"), \.autoSubmit)
+            }
+
+            section(tr("Notifications")) {
                 notificationControls
             }
 
@@ -300,8 +303,6 @@ struct SettingsView: View {
 
         if model.settings.notifications {
             toggle(tr("Notify when my PR gets feedback"), \.notifyMyPrFeedback)
-            Text(tr("A ping when a reviewer responds on one of your awake PRs. Snoozed PRs always ping when they wake."))
-                .font(.system(size: 10)).foregroundStyle(GH.muted)
         }
 
         Button(tr("Send test notification")) {

@@ -27,7 +27,9 @@ struct MyPRsView: View {
                 } else {
                     ForEach(sorted) { pr in MyPrRow(pr: pr) }
                 }
-                SnoozedSection(prs: snoozedSorted)
+                // The snoozed list lives in the window only (SnoozedSection in
+                // MyPrsSplitView); the popover stays compact. The "All caught up"
+                // hint above still signals that PRs are snoozed.
             }
             .padding(12)
         }
@@ -102,10 +104,10 @@ struct MyPrRow: View {
                 : GH.subtle,
             in: RoundedRectangle(cornerRadius: 9)
         )
+        // Capture the row's `model` in the closure — a subview inside
+        // .contextMenu wouldn't reliably inherit the @EnvironmentObject.
         .contextMenu {
-            Button {
-                model.snooze(id: pr.id)
-            } label: {
+            Button { model.snooze(id: pr.id) } label: {
                 Label(tr("Snooze until a review"), systemImage: "moon.zzz")
             }
         }
