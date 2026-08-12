@@ -250,6 +250,7 @@ final class GitHubClient {
             // ReviewLogic.isAlreadyReviewed for the full rationale.
             let pendingReviewers = (((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
                 .compactMap { ($0["requestedReviewer"] as? [String: Any])?["login"] as? String }
+                .orderedUnique { $0 } // GraphQL can duplicate a reviewer across nodes; see fetchMyPullRequests
             let reviewNodes = ((node["reviews"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
             let reviewed = ReviewLogic.isAlreadyReviewed(
                 reviewNodes: reviewNodes, pendingReviewerLogins: pendingReviewers,
@@ -307,8 +308,13 @@ final class GitHubClient {
             let commentedCount = reviews.filter { ($0["state"] as? String) == "COMMENTED" }.count
             let reviewedCount = reviews.count
             let botReviewCount = allReviews.count - reviews.count
+            // GitHub's GraphQL `reviewRequests` can return several ReviewRequest
+            // nodes (distinct ids) for the same user — a request→dismiss→re-request
+            // leaves stale records that REST's requested_reviewers and the web UI
+            // both dedupe away. Dedupe here so the same reviewer isn't listed twice.
             let pendingNodes = (((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
                 .compactMap { $0["requestedReviewer"] as? [String: Any] }
+                .orderedUnique { $0["login"] as? String }
             let pendingReviewers: [String] = pendingNodes.compactMap { $0["login"] as? String }
 
             func reviewerState(_ s: String?) -> ReviewerStatus.State? {
@@ -568,6 +574,18 @@ final class GitHubClient {
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let msg = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["message"] as? String
             throw GitHubError(message: msg ?? "Failed to submit review")
+        }
+    }
+}
+
+private extension Array {
+    /// Keeps the first element for each distinct, non-nil key, preserving order.
+    /// Elements whose key is nil are dropped.
+    func orderedUnique<K: Hashable>(by key: (Element) -> K?) -> [Element] {
+        var seen = Set<K>()
+        return filter { element in
+            guard let k = key(element) else { return false }
+            return seen.insert(k).inserted
         }
     }
 }
