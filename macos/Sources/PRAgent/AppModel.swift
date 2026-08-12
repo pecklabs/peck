@@ -630,10 +630,31 @@ final class AppModel: ObservableObject {
         guard settings.notifications, !ids.isEmpty else { return }
         for id in ids {
             guard let pr = myPrs.first(where: { $0.id == id }) else { continue }
-            Notifier.post(title: I18n.isKorean ? "💬 내 PR에 피드백" : "💬 Feedback on your PR",
+            Notifier.post(title: Self.feedbackTitle(for: pr.latestFeedbackVerdict),
                           body: pr.title, subtitle: pr.nameWithNumber,
                           userInfo: ["focusMyPr": id])
         }
+    }
+
+    /// Title for a feedback notification, prefixed with "내 PR" and tagged with the
+    /// review's verdict so approve / changes / comment read apart at a glance.
+    /// Falls back to a generic "피드백" tag when the verdict can't be resolved.
+    static func feedbackTitle(for verdict: ReviewerStatus.State?) -> String {
+        let ko = I18n.isKorean
+        let prefix = ko ? "내 PR" : "My PR"
+        let emoji: String
+        let label: String
+        switch verdict {
+        case .approved:
+            emoji = "✅"; label = ko ? "승인" : "Approved"
+        case .changesRequested:
+            emoji = "🚨"; label = ko ? "변경 요청" : "Changes requested"
+        case .commented:
+            emoji = "💬"; label = ko ? "코멘트" : "Commented"
+        case .pending, .none:
+            emoji = "💬"; label = ko ? "피드백" : "Feedback"
+        }
+        return "\(prefix) - \(emoji) \(label)"
     }
 
     private func handleNotifications(queue: [ReviewRequest], myPrs: [MyPullRequest]) {

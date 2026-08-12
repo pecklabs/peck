@@ -160,6 +160,20 @@ struct MyPullRequest: Identifiable, Equatable {
         ReviewLogic.feedbackFingerprint(reviews: reviewSignals)
     }
 
+    /// Verdict of the most recent non-bot review — used to title the feedback
+    /// notification (approve / changes / comment). Found by joining `reviewSignals`
+    /// (identity + submittedAt, ISO strings that sort chronologically) to
+    /// `reviewers` (each login's latest live state). `nil` when it can't be
+    /// resolved — e.g. the newest signal is a dismissed review, which is dropped
+    /// from `reviewers` — and the caller falls back to a generic title.
+    var latestFeedbackVerdict: ReviewerStatus.State? {
+        guard let newest = reviewSignals
+            .filter({ !$0.isBot })
+            .max(by: { ($0.submittedAt ?? "") < ($1.submittedAt ?? "") })
+        else { return nil }
+        return reviewers.first { $0.login == newest.login && !$0.isBot }?.state
+    }
+
     /// Fully approved: every requested reviewer has signed off (no one still
     /// pending) and nobody requested changes. Note GitHub reports `reviewDecision
     /// == APPROVED` once the *required count* is met even if extra reviewers were
