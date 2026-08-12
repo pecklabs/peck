@@ -234,6 +234,21 @@ struct SelfReviewBadgeRow: View {
     }
 }
 
+/// The self-review slot on a PR card while a review is (re-)running. Takes the
+/// same footprint as `SelfReviewBadgeRow` so a re-run visibly swaps the old
+/// verdict for a spinner instead of leaving the stale badge in place.
+struct SelfReviewLoadingRow: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text(tr("Peck is self-reviewing…")).font(.system(size: 11)).foregroundStyle(GH.muted)
+            Spacer()
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(GH.canvas, in: RoundedRectangle(cornerRadius: 7))
+    }
+}
+
 /// The agent's one-shot pre-flight review of the user's own PR. The popover
 /// card only shows the verdict badge (+ how many things to fix) — clicking it
 /// opens the app window, where the same section renders the full, selectable

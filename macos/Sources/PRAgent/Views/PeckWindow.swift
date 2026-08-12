@@ -262,7 +262,9 @@ struct MyPrListRow: View {
                     Text(pr.nameWithNumber).font(.system(size: 10)).foregroundStyle(GH.muted)
                     ReviewQuest(pr: pr)
                     PrStatusBadges(pr: pr)
-                    if let draft = pr.selfReview {
+                    if pr.selfReviewing {
+                        SelfReviewLoadingRow()
+                    } else if let draft = pr.selfReview {
                         SelfReviewBadgeRow(draft: draft)
                     }
                 }
