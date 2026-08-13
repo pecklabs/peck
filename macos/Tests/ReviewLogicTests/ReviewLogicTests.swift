@@ -180,6 +180,46 @@ final class AutoReviewLatchTests: XCTestCase {
     }
 }
 
+/// Self-review re-arm on push — mirrors the AutoReviewLatch head logic but for
+/// the user's own PRs (triggerSelfReviews / selfReviewedHeads).
+final class SelfReviewPushTests: XCTestCase {
+    let head = "2b3c1c0"
+
+    // Never self-reviewed (only baselined) → no recorded head → don't fire blind.
+    func testNeverReviewedDoesNotFire() {
+        XCTAssertFalse(ReviewLogic.shouldReReviewOnPush(reviewedHead: nil, currentHead: head))
+    }
+
+    // Reviewed at this exact head, no push since → skip.
+    func testSameHeadIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldReReviewOnPush(reviewedHead: head, currentHead: head))
+    }
+
+    // A new commit advanced the head → re-review.
+    func testNewHeadReArms() {
+        XCTAssertTrue(ReviewLogic.shouldReReviewOnPush(reviewedHead: "old111", currentHead: head))
+    }
+
+    // Missing current oid can't prove the head moved → stay put.
+    func testUnknownCurrentHeadIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldReReviewOnPush(reviewedHead: head, currentHead: nil))
+    }
+
+    // Latched at an unknown head (review ran but oid was missing), still unknown → skip.
+    func testUnknownReviewedAndCurrentIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldReReviewOnPush(
+            reviewedHead: ReviewLogic.unknownHead, currentHead: nil))
+    }
+
+    // Deliberately unlike `shouldAutoReview`: reviewed at an unknown oid, then a
+    // known head appears → DON'T re-review. The oid merely becoming available is
+    // not proof of a new commit, and a phantom self-review costs an agent run.
+    func testUnknownReviewedThenKnownHeadIsSkipped() {
+        XCTAssertFalse(ReviewLogic.shouldReReviewOnPush(
+            reviewedHead: ReviewLogic.unknownHead, currentHead: head))
+    }
+}
+
 /// Optimistic review-submission state machine — mirrors AppModel.submitReview /
 /// mergeQueue, so the risky "clear the card before the server confirms" path is
 /// covered without the GitHub API.
