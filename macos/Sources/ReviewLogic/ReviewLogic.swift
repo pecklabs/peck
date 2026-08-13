@@ -65,6 +65,22 @@ public enum ReviewLogic {
         return currentHead != latchedHead
     }
 
+    /// Whether an already self-reviewed PR should be self-reviewed again because
+    /// the user pushed new commits.
+    ///
+    /// `reviewedHead` is the head we last self-reviewed this PR at (nil if it was
+    /// only baselined and never reviewed — those must never re-fire blind).
+    /// `currentHead` is the PR's head now. We re-review only when both heads are
+    /// *known* and *different*: a missing / `unknownHead` oid on either side holds
+    /// position, matching `shouldAutoReview`, so a dropped oid can't phantom-fire.
+    public static func shouldReReviewOnPush(
+        reviewedHead: String?, currentHead: String?
+    ) -> Bool {
+        guard let reviewedHead, reviewedHead != unknownHead else { return false }
+        guard let currentHead, currentHead != unknownHead else { return false }
+        return currentHead != reviewedHead
+    }
+
     /// Prune the auto-submit latch (PR id → head oid) to the PRs still in the
     /// fetched queue, so it can't grow without bound as PRs merge / close.
     /// Never prunes on an empty id set — a degenerate but "successful" sync would

@@ -283,7 +283,7 @@ final class GitHubClient {
               reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
               latestReviews(first: 50) { nodes { state submittedAt author { login avatarUrl __typename } } }
               baseRef { branchProtectionRule { requiredApprovingReviewCount } }
-              commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+              commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
             } }
           }
         }
@@ -358,8 +358,10 @@ final class GitHubClient {
                 }
             }
             reviewers += allReviews.filter(isBotReview).compactMap { status($0, isBot: true) }
-            let rollup = (((node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]])?
-                .first?["commit"] as? [String: Any])?["statusCheckRollup"] as? [String: Any]
+            let headCommit = ((node["commits"] as? [String: Any])?["nodes"] as? [[String: Any]])?
+                .first?["commit"] as? [String: Any]
+            let headOid = headCommit?["oid"] as? String
+            let rollup = headCommit?["statusCheckRollup"] as? [String: Any]
             let checks = Self.mapChecks(rollup?["state"] as? String)
             let required = ((node["baseRef"] as? [String: Any])?["branchProtectionRule"] as? [String: Any])?["requiredApprovingReviewCount"] as? Int
 
@@ -376,6 +378,7 @@ final class GitHubClient {
                 changesRequestedCount: changesRequestedCount,
                 pendingReviewers: pendingReviewers,
                 updatedAt: date(node["updatedAt"]),
+                headOid: headOid,
                 requiredApprovals: max(1, required ?? 1),
                 commentedCount: commentedCount,
                 reviewedCount: reviewedCount,

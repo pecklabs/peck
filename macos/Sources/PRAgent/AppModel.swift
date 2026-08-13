@@ -80,6 +80,12 @@ final class AppModel: ObservableObject {
     private var seenMyPrIds: Set<String>?
     /// Successful self-review drafts, persisted so results survive a relaunch.
     private var storedSelfReviews: [String: ReviewDraft] = [:]
+    /// PR id → head commit oid we last self-reviewed at. Keyed by head so a push
+    /// (a changed oid) re-arms the self-review when `settings.selfReviewOnPush` is
+    /// on, while our own re-review posts and `updatedAt` bumps do not. A PR absent
+    /// here was never self-reviewed (only baselined), so it never re-fires blind.
+    /// Persisted with the self-review store and account-scoped alongside it.
+    private var selfReviewedHeads: [String: String] = [:]
     /// GitHub login the persisted self-review store belongs to.
     private var selfReviewOwner: String?
 
@@ -110,6 +116,7 @@ final class AppModel: ObservableObject {
     private let settingsKey = "settings"
     private let selfReviewSeenKey = "selfReviewSeen"
     private let selfReviewDraftsKey = "selfReviewDrafts"
+    private let selfReviewHeadsKey = "selfReviewHeads"
     private let selfReviewOwnerKey = "selfReviewOwner"
     private let autoSubmittedHeadsKey = "autoSubmittedHeads"
     private let autoSubmitOwnerKey = "autoSubmitOwner"
@@ -143,6 +150,10 @@ final class AppModel: ObservableObject {
            let drafts = try? JSONDecoder().decode([String: ReviewDraft].self, from: data) {
             storedSelfReviews = drafts
         }
+        if let data = UserDefaults.standard.data(forKey: selfReviewHeadsKey),
+           let heads = try? JSONDecoder().decode([String: String].self, from: data) {
+            selfReviewedHeads = heads
+        }
         selfReviewOwner = UserDefaults.standard.string(forKey: selfReviewOwnerKey)
     }
 
@@ -152,6 +163,9 @@ final class AppModel: ObservableObject {
         }
         if let data = try? JSONEncoder().encode(storedSelfReviews) {
             UserDefaults.standard.set(data, forKey: selfReviewDraftsKey)
+        }
+        if let data = try? JSONEncoder().encode(selfReviewedHeads) {
+            UserDefaults.standard.set(data, forKey: selfReviewHeadsKey)
         }
         UserDefaults.standard.set(selfReviewOwner, forKey: selfReviewOwnerKey)
     }
@@ -484,6 +498,7 @@ final class AppModel: ObservableObject {
             selfReviewOwner = login
             seenMyPrIds = nil
             storedSelfReviews = [:]
+            selfReviewedHeads = [:]
         }
 
         let ready = Set(myPrs.filter { !$0.isDraft }.map(\.id))
@@ -497,6 +512,18 @@ final class AppModel: ObservableObject {
                 Task { await self.runSelfReview(id: p.id) }
             }
             seenMyPrIds?.formUnion(ready)
+
+            // Re-arm on new pushes: a PR we've already self-reviewed whose head
+            // has advanced to a known, different commit gets reviewed again. Gated
+            // on the opt-in toggle; keyed off `selfReviewedHeads` (never set for a
+            // merely-baselined PR) so this only ever fires on a real head change.
+            if settings.selfReviewOnPush {
+                for p in myPrs where !p.isDraft && !p.selfReviewing
+                    && ReviewLogic.shouldReReviewOnPush(
+                        reviewedHead: selfReviewedHeads[p.id], currentHead: p.headOid) {
+                    Task { await self.runSelfReview(id: p.id) }
+                }
+            }
         }
         // Drop stored results for PRs that are no longer open — but never on an
         // empty list, where a degenerate (yet "successful") sync would wipe
@@ -504,6 +531,7 @@ final class AppModel: ObservableObject {
         if !myPrs.isEmpty {
             let openIds = Set(myPrs.map(\.id))
             storedSelfReviews = storedSelfReviews.filter { openIds.contains($0.key) }
+            selfReviewedHeads = selfReviewedHeads.filter { openIds.contains($0.key) }
         }
         persistSelfReviewStore()
     }
@@ -778,6 +806,10 @@ final class AppModel: ObservableObject {
         if myPrs[idx].selfReviewing { return }
         myPrs[idx].selfReviewing = true
         let pr = myPrs[idx]
+        // Latch the head we're reviewing before the run, not after: a failed run
+        // still counts this head as attempted, so the push re-arm in
+        // triggerSelfReviews can't re-fire it every sync — only a newer push does.
+        selfReviewedHeads[id] = pr.headOid ?? ReviewLogic.unknownHead
         do {
             let draft = try await ReviewAgent.selfReview(pr, settings: settings)
             if let i = myPrs.firstIndex(where: { $0.id == id }) {
@@ -799,6 +831,9 @@ final class AppModel: ObservableObject {
                     model: settings.model, skillsApplied: [], generatedAt: Date(),
                     error: error.localizedDescription)
             }
+            // Keep the head latch (set before the run) even on failure, so a
+            // relaunch doesn't re-fire this same head as a phantom push.
+            persistSelfReviewStore()
         }
     }
 

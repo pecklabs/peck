@@ -201,7 +201,24 @@ struct SettingsView: View {
                 }
             }
 
-            section(tr("Behavior")) {
+            section(tr("AutoPilot")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    subgroup(tr("Self-review"))
+                    toggle(tr("Auto-review on open"), \.selfReview)
+                    if model.settings.selfReview {
+                        toggle(tr("Auto re-review on new commits"), \.selfReviewOnPush)
+                    }
+                }
+                .padding(.top, 6)
+                subgroupDivider
+                VStack(alignment: .leading, spacing: 8) {
+                    subgroup(tr("Review requests"))
+                    toggle(tr("Auto-review on request"), \.autoReview)
+                    toggle(tr("Auto-submit when done"), \.autoSubmit)
+                }
+            }
+
+            section(tr("General")) {
                 themePicker
                 languagePicker(tr("App language"), \.uiLanguage)
                 settingRow(I18n.isKorean ? "\(model.settings.pollIntervalSec)\u{cd08}\u{b9c8}\u{b2e4} \u{d655}\u{c778}" : "Poll every \(model.settings.pollIntervalSec)s") {
@@ -211,9 +228,6 @@ struct SettingsView: View {
                         in: 15...600, step: 15)
                         .labelsHidden()
                 }
-                toggle(tr("Auto-review new requests"), \.autoReview)
-                toggle(tr("Self-review my new PRs"), \.selfReview)
-                toggle(tr("Auto-submit agent verdict"), \.autoSubmit)
             }
 
             section(tr("Notifications")) {
@@ -350,6 +364,20 @@ struct SettingsView: View {
             control()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// A labeled sub-group heading inside a `section` — e.g. "Self-review" and
+    /// "Review requests" under AutoPilot. Uses the primary text color (not the
+    /// muted uppercase of the section title) so the two don't read as twin
+    /// headers stacked together.
+    private func subgroup(_ title: String) -> some View {
+        Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(GH.fg)
+    }
+
+    /// A faint separator between sub-groups — lighter than the stock `Divider`
+    /// so it recedes behind the content.
+    private var subgroupDivider: some View {
+        Rectangle().fill(GH.border.opacity(0.4)).frame(height: 1)
     }
 
     @ViewBuilder private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {

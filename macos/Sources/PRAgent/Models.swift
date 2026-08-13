@@ -131,6 +131,10 @@ struct MyPullRequest: Identifiable, Equatable {
     var changesRequestedCount: Int
     var pendingReviewers: [String]
     var updatedAt: Date
+    /// Head commit oid of the PR. Lets self-review re-arm when new commits land:
+    /// the self-reviewed-head latch is keyed by this, so a push (a changed oid)
+    /// re-runs the review while a mere `updatedAt` bump does not.
+    var headOid: String? = nil
     /// Approvals required by branch protection (>=1; defaults to 1 if unknown).
     var requiredApprovals: Int = 1
     /// Reviewers who left a comment-only review.
@@ -358,6 +362,10 @@ struct AppSettings: Codable, Equatable {
     var autoReview: Bool = true
     /// Self-review each PR the user uploads and show the result in My PRs.
     var selfReview: Bool = true
+    /// Re-run the self-review automatically when I push new commits to a PR.
+    /// Only takes effect while `selfReview` is on. Off by default — each push
+    /// otherwise spends an agent run.
+    var selfReviewOnPush: Bool = false
     var autoSubmit: Bool = false
     var notifications: Bool = true
     /// Notify when a reviewer leaves feedback on one of my PRs (awake or snoozed).
@@ -376,7 +384,7 @@ struct AppSettings: Codable, Equatable {
 
     // Tolerate older persisted settings that lack the newer keys.
     enum CodingKeys: String, CodingKey {
-        case model, pollIntervalSec, autoReview, selfReview, autoSubmit, notifications, agentBackend, useGhAuth
+        case model, pollIntervalSec, autoReview, selfReview, selfReviewOnPush, autoSubmit, notifications, agentBackend, useGhAuth
         case explanationLanguage, reviewLanguage, uiLanguage, themeMode, notifyMyPrFeedback
     }
     init() {}
@@ -386,6 +394,7 @@ struct AppSettings: Codable, Equatable {
         pollIntervalSec = try c.decodeIfPresent(Int.self, forKey: .pollIntervalSec) ?? 60
         autoReview = try c.decodeIfPresent(Bool.self, forKey: .autoReview) ?? true
         selfReview = try c.decodeIfPresent(Bool.self, forKey: .selfReview) ?? true
+        selfReviewOnPush = try c.decodeIfPresent(Bool.self, forKey: .selfReviewOnPush) ?? false
         autoSubmit = try c.decodeIfPresent(Bool.self, forKey: .autoSubmit) ?? false
         notifications = try c.decodeIfPresent(Bool.self, forKey: .notifications) ?? true
         notifyMyPrFeedback = try c.decodeIfPresent(Bool.self, forKey: .notifyMyPrFeedback) ?? false
