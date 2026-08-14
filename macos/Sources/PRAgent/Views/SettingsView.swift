@@ -101,8 +101,8 @@ struct SettingsView: View {
 
     private var languageControls: some View {
         VStack(alignment: .leading, spacing: 6) {
-            languagePicker(tr("Explanation (shown to you)"), \.explanationLanguage)
-            languagePicker(tr("Review posted to GitHub"), \.reviewLanguage)
+            languagePicker(tr("Explanation language"), note: tr("Shown only to you."), \.explanationLanguage)
+            languagePicker(tr("Review language"), note: tr("Posted to GitHub."), \.reviewLanguage)
         }
     }
 
@@ -119,9 +119,14 @@ struct SettingsView: View {
         }
     }
 
-    private func languagePicker(_ title: String, _ keyPath: WritableKeyPath<AppSettings, String>) -> some View {
-        HStack {
+    private func languagePicker(_ title: String, note: String? = nil, _ keyPath: WritableKeyPath<AppSettings, String>) -> some View {
+        HStack(spacing: 6) {
             Text(title).font(.system(size: 11))
+            // Inline hint next to the label — same size, muted so it reads as a
+            // caption rather than a second label.
+            if let note {
+                Text(note).font(.system(size: 11)).foregroundStyle(GH.muted.opacity(0.6))
+            }
             Spacer()
             Picker("", selection: Binding(
                 get: { model.settings[keyPath: keyPath] },
@@ -152,10 +157,14 @@ struct SettingsView: View {
 
     @State private var replaceKey = ""
     @State private var showReplaceKey = false
+    /// Live poll-interval *preset index* while dragging the slider; nil when not
+    /// dragging. Lets the label track the drag but only persist (and reschedule
+    /// the poll timer) once, on release — see `pollIntervalRow`.
+    @State private var pollDraft: Double? = nil
 
     private var connectedSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
-            section(tr("GitHub")) {
+            section(tr("GitHub"), "arrow.triangle.branch") {
                 HStack(spacing: 8) {
                     avatar
                     VStack(alignment: .leading, spacing: 1) {
@@ -169,10 +178,10 @@ struct SettingsView: View {
                 }
             }
 
-            section(tr("Review agent")) {
+            section(tr("Review settings"), "sparkles") {
+                Text(tr("Review agent")).font(.system(size: 11))
                 backendPicker
                 backendStatus
-                languageControls
                 if model.settings.agentBackend == .anthropicAPI {
                     HStack {
                         Label(model.hasAnthropicKey ? tr("Key saved") : tr("Not set"),
@@ -199,9 +208,38 @@ struct SettingsView: View {
                             .textFieldStyle(.roundedBorder).frame(width: 170)
                     }
                 }
+                subgroupDivider
+                languageControls
+                subgroupDivider
+                // Match the language-picker label style (11pt, regular) so this
+                // heading doesn't tower over its section-mates.
+                Text(tr("Review skills")).font(.system(size: 11))
+                ForEach(Array(model.skills.enumerated()), id: \.element.id) { i, skill in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: skill.enabled ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(skill.enabled ? GH.success : GH.muted).font(.system(size: 11))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(skill.name).font(.system(size: 11, weight: .semibold))
+                            Text(skill.description).font(.system(size: 10)).foregroundStyle(GH.muted).lineLimit(2)
+                        }
+                        Spacer()
+                        // Global skill actions ride the first skill's row.
+                        if i == 0 {
+                            HStack(spacing: 12) {
+                                Button { model.reloadSkills() } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                }.buttonStyle(.borderless).help(tr("Reload"))
+                                Button { Open.url(AppPaths.skillsDir.absoluteString) } label: {
+                                    Image(systemName: "folder")
+                                }.buttonStyle(.borderless).help(tr("Open folder"))
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
             }
 
-            section(tr("AutoPilot")) {
+            section(tr("AutoPilot"), "airplane") {
                 VStack(alignment: .leading, spacing: 8) {
                     subgroup(tr("Self-review"))
                     toggle(tr("Auto-review on open"), \.selfReview)
@@ -218,44 +256,17 @@ struct SettingsView: View {
                 }
             }
 
-            section(tr("General")) {
+            section(tr("General"), "gearshape") {
                 themePicker
                 languagePicker(tr("App language"), \.uiLanguage)
-                settingRow(I18n.isKorean ? "\(model.settings.pollIntervalSec)\u{cd08}\u{b9c8}\u{b2e4} \u{d655}\u{c778}" : "Poll every \(model.settings.pollIntervalSec)s") {
-                    Stepper("", value: Binding(
-                        get: { model.settings.pollIntervalSec },
-                        set: { var s = model.settings; s.pollIntervalSec = $0; model.saveSettings(s) }),
-                        in: 15...600, step: 15)
-                        .labelsHidden()
-                }
+                pollIntervalRow
             }
 
-            section(tr("Notifications")) {
+            section(tr("Notifications"), "bell") {
                 notificationControls
             }
 
-            section(tr("Review skills")) {
-                ForEach(model.skills) { skill in
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: skill.enabled ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(skill.enabled ? GH.success : GH.muted).font(.system(size: 11))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(skill.name).font(.system(size: 11, weight: .semibold))
-                            Text(skill.description).font(.system(size: 10)).foregroundStyle(GH.muted).lineLimit(2)
-                        }
-                        Spacer()
-                    }
-                }
-                Text(tr("Skills are *.md files in ~/Library/Application Support/PRAgent/skills. Add `enabled: false` to a file's frontmatter to disable it."))
-                    .font(.system(size: 10)).foregroundStyle(GH.muted)
-                HStack {
-                    Button(tr("Reload skills")) { model.reloadSkills() }.controlSize(.small)
-                    Button(tr("Open skills folder")) { Open.url(AppPaths.skillsDir.absoluteString) }
-                        .controlSize(.small).buttonStyle(.borderless)
-                }
-            }
-
-            section(tr("About")) {
+            section(tr("About"), "info.circle") {
                 HStack {
                     Text("\(tr("Version")) \(Self.appVersion)").font(.system(size: 12))
                     Spacer()
@@ -275,6 +286,58 @@ struct SettingsView: View {
 
     private static let appVersion =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+
+    /// The poll cadences the slider snaps between. A short list of meaningful
+    /// stops (not a fine continuous range) so the slider reads at a glance and
+    /// the six tick marks stay sparse.
+    private static let pollPresets: [(secs: Int, ko: String, en: String)] = [
+        (30,   "30\u{cd08}", "30s"),
+        (60,   "60\u{cd08}", "60s"),
+        (300,  "5\u{bd84}",  "5m"),
+        (600,  "10\u{bd84}", "10m"),
+        (1800, "30\u{bd84}", "30m"),
+        (3600, "1\u{c2dc}\u{ac04}", "1h"),
+    ]
+
+    /// The preset index nearest the stored cadence — so a legacy value that isn't
+    /// exactly on a stop still lands on the closest one.
+    private var pollPresetIndex: Int {
+        let cur = model.settings.pollIntervalSec
+        return Self.pollPresets.enumerated()
+            .min { abs($0.element.secs - cur) < abs($1.element.secs - cur) }!.offset
+    }
+
+    /// Poll cadence as a native slider snapping across `pollPresets`. The label
+    /// tracks the live drag via `pollDraft` (a preset index), but we only persist —
+    /// and reschedule the poll timer — when the drag ends, so a drag doesn't
+    /// thrash `saveSettings`.
+    @ViewBuilder private var pollIntervalRow: some View {
+        let idx = Int((pollDraft ?? Double(pollPresetIndex)).rounded())
+        let preset = Self.pollPresets[idx]
+        settingRow(tr("Refresh interval")) {
+            HStack(spacing: 8) {
+                // Fixed width + trailing align so the slider doesn't shift as the
+                // readout changes width (30초 ↔ 1시간).
+                Text(I18n.isKorean ? preset.ko : preset.en)
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(GH.muted)
+                    .frame(width: 46, alignment: .trailing)
+                Slider(value: Binding(
+                    get: { pollDraft ?? Double(pollPresetIndex) },
+                    set: { pollDraft = $0 }),
+                    in: 0...Double(Self.pollPresets.count - 1), step: 1,
+                    onEditingChanged: { editing in
+                        guard !editing, let v = pollDraft else { return }
+                        var s = model.settings
+                        s.pollIntervalSec = Self.pollPresets[Int(v.rounded())].secs
+                        model.saveSettings(s)
+                        pollDraft = nil
+                    })
+                    .frame(width: 150)
+                    .controlSize(.small)
+            }
+        }
+    }
 
     // MARK: Notifications
 
@@ -320,8 +383,8 @@ struct SettingsView: View {
         }
 
         Button(tr("Send test notification")) {
-            Notifier.post(title: "Peck", body: "Test notification ✅",
-                          subtitle: "If you see this, notifications work")
+            Notifier.post(title: I18n.isKorean ? "테스트 알림" : "Test notification",
+                          body: I18n.isKorean ? "알림이 정상 작동해요" : "Notifications are working")
         }
         .controlSize(.small)
         .disabled(blocked)
@@ -329,7 +392,7 @@ struct SettingsView: View {
 
     @ViewBuilder private var avatar: some View {
         let placeholder = Image(systemName: "person.crop.circle.fill")
-            .font(.system(size: 22)).foregroundStyle(GH.muted)
+            .font(.system(size: 28)).foregroundStyle(GH.muted)
         if let s = model.user?.avatarUrl, let url = URL(string: s), !s.isEmpty {
             AsyncImage(url: url) { phase in
                 if let img = phase.image {
@@ -338,7 +401,7 @@ struct SettingsView: View {
                     placeholder
                 }
             }
-            .frame(width: 24, height: 24)
+            .frame(width: 30, height: 30)
             .clipShape(Circle())
         } else {
             placeholder
@@ -380,9 +443,13 @@ struct SettingsView: View {
         Rectangle().fill(GH.border.opacity(0.4)).frame(height: 1)
     }
 
-    @ViewBuilder private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+    @ViewBuilder private func section<Content: View>(_ title: String, _ systemImage: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(GH.muted)
+            HStack(spacing: 5) {
+                Image(systemName: systemImage).font(.system(size: 10, weight: .bold))
+                Text(title.uppercased()).font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(GH.muted)
             content()
         }
         .padding(12)

@@ -178,6 +178,16 @@ struct MyPullRequest: Identifiable, Equatable {
         return reviewers.first { $0.login == newest.login && !$0.isBot }?.state
     }
 
+    /// Login of the reviewer behind the most recent non-bot review — used to
+    /// credit the feedback notification (`· @login`). `nil` when there's no
+    /// non-bot review yet.
+    var latestFeedbackReviewer: String? {
+        reviewSignals
+            .filter { !$0.isBot }
+            .max(by: { ($0.submittedAt ?? "") < ($1.submittedAt ?? "") })?
+            .login
+    }
+
     /// Fully approved: every requested reviewer has signed off (no one still
     /// pending) and nobody requested changes. Note GitHub reports `reviewDecision
     /// == APPROVED` once the *required count* is met even if extra reviewers were
