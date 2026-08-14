@@ -213,7 +213,14 @@ struct SettingsView: View {
                 subgroupDivider
                 // Match the language-picker label style (11pt, regular) so this
                 // heading doesn't tower over its section-mates.
-                Text(tr("Review skills")).font(.system(size: 11))
+                HStack {
+                    Text(tr("Review skills")).font(.system(size: 11))
+                    Spacer()
+                    // When there are no skills to hang the actions off of (seeding
+                    // unavailable, or all files removed), keep Reload / Open folder
+                    // reachable here so the user can still get to the folder.
+                    if model.skills.isEmpty { skillActions }
+                }
                 ForEach(Array(model.skills.enumerated()), id: \.element.id) { i, skill in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: skill.enabled ? "checkmark.circle.fill" : "circle")
@@ -224,17 +231,7 @@ struct SettingsView: View {
                         }
                         Spacer()
                         // Global skill actions ride the first skill's row.
-                        if i == 0 {
-                            HStack(spacing: 12) {
-                                Button { model.reloadSkills() } label: {
-                                    Image(systemName: "arrow.clockwise")
-                                }.buttonStyle(.borderless).help(tr("Reload"))
-                                Button { Open.url(AppPaths.skillsDir.absoluteString) } label: {
-                                    Image(systemName: "folder")
-                                }.buttonStyle(.borderless).help(tr("Open folder"))
-                            }
-                            .controlSize(.small)
-                        }
+                        if i == 0 { skillActions }
                     }
                 }
             }
@@ -287,33 +284,21 @@ struct SettingsView: View {
     private static let appVersion =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
 
-    /// The poll cadences the slider snaps between. A short list of meaningful
-    /// stops (not a fine continuous range) so the slider reads at a glance and
-    /// the six tick marks stay sparse.
-    private static let pollPresets: [(secs: Int, ko: String, en: String)] = [
-        (30,   "30\u{cd08}", "30s"),
-        (60,   "60\u{cd08}", "60s"),
-        (300,  "5\u{bd84}",  "5m"),
-        (600,  "10\u{bd84}", "10m"),
-        (1800, "30\u{bd84}", "30m"),
-        (3600, "1\u{c2dc}\u{ac04}", "1h"),
-    ]
-
     /// The preset index nearest the stored cadence — so a legacy value that isn't
     /// exactly on a stop still lands on the closest one.
     private var pollPresetIndex: Int {
         let cur = model.settings.pollIntervalSec
-        return Self.pollPresets.enumerated()
+        return pollIntervalPresets.enumerated()
             .min { abs($0.element.secs - cur) < abs($1.element.secs - cur) }!.offset
     }
 
-    /// Poll cadence as a native slider snapping across `pollPresets`. The label
-    /// tracks the live drag via `pollDraft` (a preset index), but we only persist —
-    /// and reschedule the poll timer — when the drag ends, so a drag doesn't
-    /// thrash `saveSettings`.
+    /// Poll cadence as a native slider snapping across `pollIntervalPresets`. The
+    /// label tracks the live drag via `pollDraft` (a preset index), but we only
+    /// persist — and reschedule the poll timer — when the drag ends, so a drag
+    /// doesn't thrash `saveSettings`.
     @ViewBuilder private var pollIntervalRow: some View {
         let idx = Int((pollDraft ?? Double(pollPresetIndex)).rounded())
-        let preset = Self.pollPresets[idx]
+        let preset = pollIntervalPresets[idx]
         settingRow(tr("Refresh interval")) {
             HStack(spacing: 8) {
                 // Fixed width + trailing align so the slider doesn't shift as the
@@ -325,11 +310,11 @@ struct SettingsView: View {
                 Slider(value: Binding(
                     get: { pollDraft ?? Double(pollPresetIndex) },
                     set: { pollDraft = $0 }),
-                    in: 0...Double(Self.pollPresets.count - 1), step: 1,
+                    in: 0...Double(pollIntervalPresets.count - 1), step: 1,
                     onEditingChanged: { editing in
                         guard !editing, let v = pollDraft else { return }
                         var s = model.settings
-                        s.pollIntervalSec = Self.pollPresets[Int(v.rounded())].secs
+                        s.pollIntervalSec = pollIntervalPresets[Int(v.rounded())].secs
                         model.saveSettings(s)
                         pollDraft = nil
                     })
@@ -441,6 +426,20 @@ struct SettingsView: View {
     /// so it recedes behind the content.
     private var subgroupDivider: some View {
         Rectangle().fill(GH.border.opacity(0.4)).frame(height: 1)
+    }
+
+    /// Reload-skills / open-folder icon buttons. Global actions, so they render
+    /// once — on the first skill row, or on the heading when there are no skills.
+    private var skillActions: some View {
+        HStack(spacing: 12) {
+            Button { model.reloadSkills() } label: {
+                Image(systemName: "arrow.clockwise")
+            }.buttonStyle(.borderless).help(tr("Reload"))
+            Button { Open.url(AppPaths.skillsDir.absoluteString) } label: {
+                Image(systemName: "folder")
+            }.buttonStyle(.borderless).help(tr("Open folder"))
+        }
+        .controlSize(.small)
     }
 
     @ViewBuilder private func section<Content: View>(_ title: String, _ systemImage: String, @ViewBuilder _ content: () -> Content) -> some View {

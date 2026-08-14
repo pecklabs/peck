@@ -268,6 +268,14 @@ final class AppModel: ObservableObject {
            let s = try? JSONDecoder().decode(AppSettings.self, from: data) {
             settings = s
         }
+        // Migrate a legacy poll interval (the old 15–600s stepper allowed values
+        // the slider no longer offers) onto the nearest preset, so the stored
+        // value matches what the Refresh-interval slider shows and polls at.
+        let cur = settings.pollIntervalSec
+        if let nearest = pollIntervalPresets.map(\.secs).min(by: { abs($0 - cur) < abs($1 - cur) }),
+           nearest != cur {
+            var s = settings; s.pollIntervalSec = nearest; persist(s)
+        }
     }
 
     /// Persist settings without disturbing the poll loop.
@@ -658,8 +666,9 @@ final class AppModel: ObservableObject {
         guard settings.notifications, !ids.isEmpty else { return }
         for id in ids {
             guard let pr = myPrs.first(where: { $0.id == id }) else { continue }
-            let base = Self.feedbackTitle(for: pr.latestFeedbackVerdict)
-            let title = pr.latestFeedbackReviewer.map { "\(base) · @\($0)" } ?? base
+            let fb = pr.latestFeedback
+            let base = Self.feedbackTitle(for: fb?.verdict)
+            let title = fb.map { "\(base) · @\($0.reviewer)" } ?? base
             Notifier.post(title: title, body: pr.title, subtitle: pr.nameWithNumber,
                           userInfo: ["focusMyPr": id])
         }
