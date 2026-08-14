@@ -268,6 +268,14 @@ final class AppModel: ObservableObject {
            let s = try? JSONDecoder().decode(AppSettings.self, from: data) {
             settings = s
         }
+        // Migrate a legacy poll interval (the old 15–600s stepper allowed values
+        // the slider no longer offers) onto the nearest preset, so the stored
+        // value matches what the Refresh-interval slider shows and polls at.
+        let cur = settings.pollIntervalSec
+        if let nearest = pollIntervalPresets.map(\.secs).min(by: { abs($0 - cur) < abs($1 - cur) }),
+           nearest != cur {
+            var s = settings; s.pollIntervalSec = nearest; persist(s)
+        }
     }
 
     /// Persist settings without disturbing the poll loop.
@@ -658,8 +666,10 @@ final class AppModel: ObservableObject {
         guard settings.notifications, !ids.isEmpty else { return }
         for id in ids {
             guard let pr = myPrs.first(where: { $0.id == id }) else { continue }
-            Notifier.post(title: Self.feedbackTitle(for: pr.latestFeedbackVerdict),
-                          body: pr.title, subtitle: pr.nameWithNumber,
+            let fb = pr.latestFeedback
+            let base = Self.feedbackTitle(for: fb?.verdict)
+            let title = fb.map { "\(base) · @\($0.reviewer)" } ?? base
+            Notifier.post(title: title, body: pr.title, subtitle: pr.nameWithNumber,
                           userInfo: ["focusMyPr": id])
         }
     }
@@ -670,19 +680,14 @@ final class AppModel: ObservableObject {
     static func feedbackTitle(for verdict: ReviewerStatus.State?) -> String {
         let ko = I18n.isKorean
         let prefix = ko ? "내 PR" : "My PR"
-        let emoji: String
         let label: String
         switch verdict {
-        case .approved:
-            emoji = "✅"; label = ko ? "승인" : "Approved"
-        case .changesRequested:
-            emoji = "🚨"; label = ko ? "변경 요청" : "Changes requested"
-        case .commented:
-            emoji = "💬"; label = ko ? "코멘트" : "Commented"
-        case .pending, .none:
-            emoji = "💬"; label = ko ? "피드백" : "Feedback"
+        case .approved:          label = ko ? "승인" : "Approved"
+        case .changesRequested:  label = ko ? "변경 요청" : "Changes requested"
+        case .commented:         label = ko ? "코멘트" : "Commented"
+        case .pending, .none:    label = ko ? "피드백" : "Feedback"
         }
-        return "\(prefix) - \(emoji) \(label)"
+        return "\(prefix) · \(label)"
     }
 
     private func handleNotifications(queue: [ReviewRequest], myPrs: [MyPullRequest]) {
@@ -692,7 +697,8 @@ final class AppModel: ObservableObject {
             if notifiedReviews.contains(r.id) { continue }
             notifiedReviews.insert(r.id)
             if notify {
-                Notifier.post(title: "New review request", body: r.title,
+                Notifier.post(title: I18n.isKorean ? "새 리뷰 요청" : "New review request",
+                              body: r.title,
                               subtitle: "\(r.owner)/\(r.repo) · @\(r.author.login)")
             }
         }
@@ -729,9 +735,9 @@ final class AppModel: ObservableObject {
             if p.approvedButConflicted && !notifiedConflicts.contains(p.id) {
                 notifiedConflicts.insert(p.id)
                 if notify {
-                    Notifier.post(title: "Merge conflict",
-                                  body: "\(p.title) is approved but has conflicts",
-                                  subtitle: "\(p.owner)/\(p.repo)")
+                    Notifier.post(title: I18n.isKorean ? "머지 충돌" : "Merge conflict",
+                                  body: I18n.isKorean ? "충돌이 있습니다" : "Has conflicts",
+                                  subtitle: p.nameWithNumber)
                 }
             }
             if !p.approvedButConflicted { notifiedConflicts.remove(p.id) }
@@ -740,7 +746,12 @@ final class AppModel: ObservableObject {
         let allApproved = !myPrs.isEmpty && myPrs.allSatisfy { $0.allApproved }
             && !myPrs.contains { $0.approvedButConflicted }
         if allApproved && !prevAllApproved && notify {
-            Notifier.post(title: "All approved", body: "All of your open PRs are approved 🎉")
+            // "All approved" can span several PRs, so a single owner/repo #number
+            // only makes sense when there's exactly one; otherwise omit it.
+            let subtitle = myPrs.count == 1 ? myPrs.first?.nameWithNumber : nil
+            Notifier.post(title: I18n.isKorean ? "모두 승인 완료" : "All approved",
+                          body: I18n.isKorean ? "열린 PR이 모두 승인됐어요 🎉" : "All your open PRs are approved 🎉",
+                          subtitle: subtitle)
         }
         prevAllApproved = allApproved
     }
@@ -759,8 +770,8 @@ final class AppModel: ObservableObject {
                 reviewQueue[i].reviewing = false
             }
             if settings.notifications {
-                Notifier.post(title: "Peck reviewed · \(draft.verdict.label)", body: pr.title,
-                              subtitle: pr.nameWithNumber)
+                Notifier.post(title: (I18n.isKorean ? "Peck 리뷰" : "Peck review") + " · \(draft.verdict.label)",
+                              body: pr.title, subtitle: pr.nameWithNumber)
             }
             if settings.autoSubmit {
                 // In-flight lock so an overlapping sync can't fire a second POST.
@@ -820,8 +831,8 @@ final class AppModel: ObservableObject {
             seenMyPrIds?.insert(id)
             persistSelfReviewStore()
             if settings.notifications {
-                Notifier.post(title: "Peck self-review · \(draft.verdict.label)", body: pr.title,
-                              subtitle: pr.nameWithNumber, userInfo: ["selfReviewPr": id])
+                Notifier.post(title: (I18n.isKorean ? "Peck 셀프 리뷰" : "Peck self-review") + " · \(draft.verdict.label)",
+                              body: pr.title, subtitle: pr.nameWithNumber, userInfo: ["selfReviewPr": id])
             }
         } catch {
             if let i = myPrs.firstIndex(where: { $0.id == id }) {

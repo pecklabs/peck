@@ -164,18 +164,23 @@ struct MyPullRequest: Identifiable, Equatable {
         ReviewLogic.feedbackFingerprint(reviews: reviewSignals)
     }
 
-    /// Verdict of the most recent non-bot review — used to title the feedback
-    /// notification (approve / changes / comment). Found by joining `reviewSignals`
-    /// (identity + submittedAt, ISO strings that sort chronologically) to
-    /// `reviewers` (each login's latest live state). `nil` when it can't be
-    /// resolved — e.g. the newest signal is a dismissed review, which is dropped
-    /// from `reviewers` — and the caller falls back to a generic title.
-    var latestFeedbackVerdict: ReviewerStatus.State? {
+    /// The most recent non-bot review's author and verdict — titles the feedback
+    /// notification ("내 PR · {verdict} · @{reviewer}"). The newest review is found
+    /// in `reviewSignals` (identity + submittedAt, ISO strings that sort
+    /// chronologically) and its verdict joined from `reviewers` (each login's
+    /// latest live state). `nil` when there's no non-bot review at all.
+    var latestFeedback: (reviewer: String, verdict: ReviewerStatus.State?)? {
         guard let newest = reviewSignals
             .filter({ !$0.isBot })
             .max(by: { ($0.submittedAt ?? "") < ($1.submittedAt ?? "") })
         else { return nil }
-        return reviewers.first { $0.login == newest.login && !$0.isBot }?.state
+        // Both the credited reviewer and the verdict come from this single
+        // `newest` signal, so the notification's verdict and `· @login` can never
+        // describe two different people. Verdict is nil when the login has no
+        // resolvable live state in `reviewers` (e.g. a dismissed review), and the
+        // caller falls back to a generic title while still crediting the login.
+        let verdict = reviewers.first { $0.login == newest.login && !$0.isBot }?.state
+        return (newest.login, verdict)
     }
 
     /// Fully approved: every requested reviewer has signed off (no one still
@@ -409,6 +414,19 @@ struct AppSettings: Codable, Equatable {
 
 /// Languages offered in the picker (the value is sent verbatim to the agent).
 let supportedLanguages = ["한국어", "English"]
+
+/// Poll cadences the Refresh-interval slider snaps between, with display labels.
+/// Single source of truth shared by the slider and the settings migration, so a
+/// stored value that predates the presets (the old 15–600s stepper) can be
+/// pulled onto the nearest allowed value.
+let pollIntervalPresets: [(secs: Int, ko: String, en: String)] = [
+    (30,   "30초", "30s"),
+    (60,   "60초", "60s"),
+    (300,  "5분",  "5m"),
+    (600,  "10분", "10m"),
+    (1800, "30분", "30m"),
+    (3600, "1시간", "1h"),
+]
 
 struct SkillInfo: Identifiable, Equatable {
     var id: String { name }
