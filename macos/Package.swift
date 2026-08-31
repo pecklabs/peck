@@ -5,7 +5,8 @@ let package = Package(
     name: "PRAgent",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1")
     ],
     targets: [
         // Pure decision logic with no UI/network deps, split out to be testable.
@@ -26,7 +27,8 @@ let package = Package(
             name: "PRAgent",
             dependencies: [
                 "ReviewLogic",
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "MarkdownUI", package: "swift-markdown-ui")
             ],
             resources: [
                 .copy("Resources/skills"),

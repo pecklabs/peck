@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import MarkdownUI
 
 private struct PeckWindowModeKey: EnvironmentKey {
     static let defaultValue = false
@@ -396,21 +397,22 @@ struct CommentRow: View {
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(GH.accent)
                     .lineLimit(1).truncationMode(.middle)
             }
-            Text(markdownBody)
-                .font(.system(size: 11))
+            Markdown(comment.body)
+                // Comment bodies are authored by arbitrary GitHub users and bots.
+                // MarkdownUI's default image providers fetch remote image URLs, so a
+                // comment like `![](http://attacker/pixel.png)` would phone the viewer's
+                // IP/UA home the moment it renders. Block both: neither provider touches
+                // the network (block images render nothing, inline images throw). The
+                // inline-only renderer this replaced never loaded images either.
+                .markdownImageProvider(NoRemoteImageProvider())
+                .markdownInlineImageProvider(NoRemoteInlineImageProvider())
+                .markdownTextStyle { FontSize(11) }
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(GH.subtle, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var markdownBody: AttributedString {
-        (try? AttributedString(
-            markdown: comment.body,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(comment.body)
     }
 
     @ViewBuilder private var verdictPill: some View {
@@ -425,6 +427,19 @@ struct CommentRow: View {
             EmptyView()
         }
     }
+}
+
+/// Renders nothing for block-level `![](url)` images so an untrusted comment
+/// body can't trigger a remote fetch. See the note in `CommentRow`.
+private struct NoRemoteImageProvider: ImageProvider {
+    func makeImage(url: URL?) -> some View { EmptyView() }
+}
+
+/// Refuses inline images so they never hit the network; MarkdownUI treats the
+/// throw as a load failure and shows nothing.
+private struct NoRemoteInlineImageProvider: InlineImageProvider {
+    private struct Blocked: Error {}
+    func image(with url: URL, label: String) async throws -> Image { throw Blocked() }
 }
 
 // MARK: - Reviews (list left, draft right)
