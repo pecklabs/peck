@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import MarkdownUI
 
 private struct PeckWindowModeKey: EnvironmentKey {
     static let defaultValue = false
@@ -396,21 +397,14 @@ struct CommentRow: View {
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(GH.accent)
                     .lineLimit(1).truncationMode(.middle)
             }
-            Text(markdownBody)
-                .font(.system(size: 11))
+            Markdown(comment.body)
+                .markdownTextStyle { FontSize(11) }
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(GH.subtle, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var markdownBody: AttributedString {
-        (try? AttributedString(
-            markdown: comment.body,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(comment.body)
     }
 
     @ViewBuilder private var verdictPill: some View {
