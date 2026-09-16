@@ -74,30 +74,23 @@ struct MyPrRow: View {
     var pr: MyPullRequest
 
     var body: some View {
-        HStack(spacing: 0) {
-            if pr.approvedButConflicted {
-                Rectangle()
-                    .fill(GH.severe)
-                    .frame(width: 3)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Button { Open.url(pr.url) } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(pr.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
-                            Spacer()
-                        }
-                        Text(pr.nameWithNumber).font(.system(size: 10)).foregroundStyle(GH.muted)
-                        ReviewQuest(pr: pr)
-                        PrStatusBadges(pr: pr)
+        VStack(alignment: .leading, spacing: 6) {
+            Button { Open.url(pr.url) } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(pr.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                        Spacer()
                     }
-                    .contentShape(Rectangle())
+                    Text(pr.nameWithNumber).font(.system(size: 10)).foregroundStyle(GH.muted)
+                    ReviewQuest(pr: pr)
+                    PrStatusBadges(pr: pr)
                 }
-                .buttonStyle(.plain)
-                SelfReviewSection(pr: pr)
+                .contentShape(Rectangle())
             }
-            .padding(10)
+            .buttonStyle(.plain)
+            SelfReviewSection(pr: pr)
         }
+        .padding(10)
         .background(
             pr.approvedButConflicted
                 ? GH.severe.opacity(0.08)

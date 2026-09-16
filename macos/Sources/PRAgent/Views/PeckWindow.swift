@@ -254,25 +254,19 @@ struct MyPrListRow: View {
 
     var body: some View {
         Button(action: select) {
-            HStack(spacing: 0) {
-                if pr.approvedButConflicted {
-                    Rectangle().fill(GH.severe).frame(width: 3)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(pr.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                Text(pr.nameWithNumber).font(.system(size: 10)).foregroundStyle(GH.muted)
+                ReviewQuest(pr: pr)
+                PrStatusBadges(pr: pr)
+                if pr.selfReviewing {
+                    SelfReviewLoadingRow()
+                } else if let draft = pr.selfReview {
+                    SelfReviewBadgeRow(draft: draft)
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(pr.title).font(.system(size: 12, weight: .semibold)).lineLimit(2)
-                    Text(pr.nameWithNumber).font(.system(size: 10)).foregroundStyle(GH.muted)
-                    ReviewQuest(pr: pr)
-                    PrStatusBadges(pr: pr)
-                    if pr.selfReviewing {
-                        SelfReviewLoadingRow()
-                    } else if let draft = pr.selfReview {
-                        SelfReviewBadgeRow(draft: draft)
-                    }
-                }
-                .padding(10)
             }
+            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true) // keep the conflict bar from stretching the row
             .background(
                 pr.approvedButConflicted ? GH.severe.opacity(0.08) : GH.subtle,
                 in: RoundedRectangle(cornerRadius: 9))
