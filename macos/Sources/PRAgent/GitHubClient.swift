@@ -282,6 +282,7 @@ final class GitHubClient {
               reviewDecision mergeable
               reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
               latestReviews(first: 50) { nodes { state submittedAt author { login avatarUrl __typename } } }
+              latestOpinionatedReviews(first: 50) { nodes { state author { login __typename } } }
               baseRef { branchProtectionRule { requiredApprovingReviewCount } }
               commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
             } }
@@ -303,9 +304,31 @@ final class GitHubClient {
                     || (author?["login"] as? String)?.hasSuffix("[bot]") == true
             }
             let reviews = allReviews.filter { !isBotReview($0) }
-            let approvedCount = reviews.filter { ($0["state"] as? String) == "APPROVED" }.count
-            let changesRequestedCount = reviews.filter { ($0["state"] as? String) == "CHANGES_REQUESTED" }.count
-            let commentedCount = reviews.filter { ($0["state"] as? String) == "COMMENTED" }.count
+            // GitHub's authoritative per-author verdict: the latest APPROVED /
+            // CHANGES_REQUESTED review, ignoring any COMMENTED/DISMISSED left
+            // *afterward* — exactly what drives `reviewDecision` and the web
+            // sidebar's checkmarks. `latestReviews` alone reports a reviewer who
+            // approved and then commented as COMMENTED, undercounting approvals
+            // (the "승인 2/2 vs 3 checks" mismatch). So take approve/changes verdicts
+            // from `latestOpinionatedReviews` and keep `latestReviews` only for the
+            // comment-only fallback, avatars, submittedAt, and the roster.
+            let opinionated: [String: String] = (((node["latestOpinionatedReviews"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
+                .filter { !isBotReview($0) }
+                .reduce(into: [:]) { acc, r in
+                    if let login = (r["author"] as? [String: Any])?["login"] as? String,
+                       let state = r["state"] as? String { acc[login] = state }
+                }
+            // A reviewer's effective verdict: their opinionated verdict if any,
+            // else their latest review's raw state (COMMENTED; DISMISSED/PENDING
+            // carry none). Bots aren't in `opinionated`, so they fall through to
+            // their raw state unchanged.
+            func effectiveState(_ r: [String: Any]) -> String? {
+                let login = (r["author"] as? [String: Any])?["login"] as? String ?? ""
+                return opinionated[login] ?? (r["state"] as? String)
+            }
+            let approvedCount = opinionated.values.filter { $0 == "APPROVED" }.count
+            let changesRequestedCount = opinionated.values.filter { $0 == "CHANGES_REQUESTED" }.count
+            let commentedCount = reviews.filter { effectiveState($0) == "COMMENTED" }.count
             let reviewedCount = reviews.count
             let botReviewCount = allReviews.count - reviews.count
             // GitHub's GraphQL `reviewRequests` can return several ReviewRequest
@@ -328,7 +351,7 @@ final class GitHubClient {
             func status(_ r: [String: Any], isBot: Bool) -> ReviewerStatus? {
                 guard let author = r["author"] as? [String: Any],
                       let login = author["login"] as? String,
-                      let state = reviewerState(r["state"] as? String) else { return nil }
+                      let state = reviewerState(effectiveState(r)) else { return nil }
                 return ReviewerStatus(login: login, state: state, isBot: isBot,
                                       avatarUrl: author["avatarUrl"] as? String ?? "")
             }
